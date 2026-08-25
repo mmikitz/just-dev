@@ -1,0 +1,27 @@
+# This file intentionally contains only module declarations and public aliases.
+# Keeping settings out of this module prevents collisions with a host justfile.
+mod devtools 'recipes/common.just'
+mod auth 'recipes/auth.just'
+mod jira 'recipes/jira.just'
+mod bitbucket 'recipes/bitbucket.just'
+mod jenkins 'recipes/jenkins.just'
+mod confluence 'recipes/confluence.just'
+mod project 'recipes/project.just'
+
+alias check-devtools := devtools::check-devtools
+alias configure-auth := auth::configure-auth
+alias unlock-secrets := auth::unlock-secrets
+alias show-auth-status := auth::show-auth-status
+alias lock-secrets := auth::lock-secrets
+alias create-jira-issue := jira::create-jira-issue
+alias read-jira-isdue := jira::read-jira-isdue
+alias update-jira-issue := jira::update-jira-issue
+alias delete-jira-issue := jira::delete-jira-issue
+alias create-pull-request := bitbucket::create-pull-request
+alias show-pull-request := bitbucket::show-pull-request
+alias run-build := jenkins::run-build
+alias show-build-status := jenkins::show-build-status
+alias preview-release-notes := confluence::preview-release-notes
+alias publish-release-notes := confluence::publish-release-notes
+alias verify-project := project::verify-project
+alias run-ci := project::run-ci

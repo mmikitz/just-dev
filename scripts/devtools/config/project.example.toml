@@ -1,0 +1,36 @@
+# Copy this file to project.toml and replace every example value before use.
+
+[atlassian]
+# The Cloud ID, not a hostname. Scoped tokens are sent only to this tenant.
+cloud_id = "REPLACE_WITH_ATLASSIAN_CLOUD_ID"
+
+[jira.presets.bug]
+project = "REPLACE"
+issue_type = "Bug"
+labels = ["auto-filed"]
+
+[bitbucket]
+workspace = "REPLACE"
+repository = "REPLACE"
+username = "REPLACE"
+target_branch = "main"
+reviewers = []
+
+[jenkins]
+url = "https://jenkins.example.invalid"
+username = "REPLACE"
+
+[jenkins.presets.test]
+job = "REPLACE/job/test"
+allowed_parameters = ["REF"]
+
+[confluence]
+
+[confluence.presets.release-notes]
+page_id = "REPLACE"
+title = "Release notes"
+
+[project]
+# Direct-CLI fallback only. The normal project hook is recipes/project.just.
+starter_hook = true
+verify_commands = []

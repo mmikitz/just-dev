@@ -1,0 +1,15 @@
+# Local tool/runtime state
+.claude/scheduled_tasks.lock
+
+# Python tooling
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+*.kdbx
+

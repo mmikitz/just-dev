@@ -1,0 +1,380 @@
+from __future__ import annotations
+
+import pytest
+from atlassian.errors import ApiPermissionError
+from requests.exceptions import RequestException, Timeout
+
+import just_dev.adapters as adapters
+from just_dev.adapters import BitbucketAdapter, ConfluenceAdapter, JenkinsAdapter, JiraAdapter
+from just_dev.errors import AuthenticationError, ConflictError, NetworkError, PermissionDeniedError
+from just_dev.models import BitbucketSettings, ConfluencePreset, JenkinsPreset, JenkinsSettings
+
+
+class FakeJira:
+    def __init__(self) -> None:
+        self.post_calls: list[tuple] = []
+        self.get_calls: list[tuple] = []
+        self.put_calls: list[tuple] = []
+        self.delete_calls: list[tuple] = []
+
+    def resource_url(self, resource, api_root=None, api_version=None):
+        return f"rest/api/3/{resource}"
+
+    def post(self, path, *, data=None, params=None):
+        self.post_calls.append((path, data, params))
+        return {"id": "10001", "key": "DEV-1", "self": "https://jira.test/DEV-1"}
+
+    def get(self, path, *, params=None):
+        self.get_calls.append((path, params))
+        return {
+            "key": "DEV-1",
+            "fields": {
+                "summary": "A summary",
+                "status": {"name": "In Progress"},
+                "assignee": {"displayName": "Ada"},
+            },
+        }
+
+    def put(self, path, *, data=None, params=None):
+        self.put_calls.append((path, data, params))
+        return None
+
+    def delete(self, path, *, params=None):
+        self.delete_calls.append((path, params))
+        return None
+
+
+class FakeBitbucket:
+    def __init__(self, pull_requests: list[dict]) -> None:
+        self.pull_requests = pull_requests
+        self.list_calls: list[tuple] = []
+        self.create_calls: list[tuple] = []
+
+    def get_pull_requests(self, *args, **kwargs):
+        self.list_calls.append((args, kwargs))
+        yield from self.pull_requests
+
+    def create_pull_request(self, *args):
+        self.create_calls.append(args)
+        return {
+            "id": 6,
+            "title": args[2]["title"],
+            "source": args[2]["source"],
+            "destination": args[2]["destination"],
+            "links": {"html": {"href": "https://bitbucket.test/pr/6"}},
+        }
+
+    def get_pull_request(self, *args):
+        return {
+            "id": args[-1],
+            "title": "Existing",
+            "source": {"branch": {"name": "feature/x"}},
+            "destination": {"branch": {"name": "main"}},
+        }
+
+
+class FakeJenkins:
+    def __init__(self) -> None:
+        self.build_calls: list[tuple] = []
+        self.queue_calls: list[int] = []
+        self.info_calls: list[tuple[str, int]] = []
+
+    def build_job(self, name, parameters=None, token=None):
+        self.build_calls.append((name, parameters, token))
+        return 18
+
+    def get_queue_item(self, number, depth=0):
+        self.queue_calls.append(number)
+        return {"executable": {"number": 4}}
+
+    def get_build_info(self, name, number, depth=0):
+        self.info_calls.append((name, number))
+        return {"building": False, "result": "SUCCESS", "url": "https://jenkins.test/job/test/4/"}
+
+
+class FakeConfluence:
+    def __init__(self) -> None:
+        self.get_calls: list[tuple] = []
+        self.put_calls: list[tuple] = []
+
+    def get(self, path, *, params=None):
+        self.get_calls.append((path, params))
+        return {
+            "id": "42",
+            "title": "Release notes",
+            "version": {"number": 3},
+            "_links": {"webui": "/wiki/spaces/DEV/pages/42"},
+            "body": {"storage": {"value": "<p>Old</p>"}},
+        }
+
+    def resource_url(self, resource, api_root=None, api_version=None):
+        return f"wiki/api/v2/{resource}"
+
+    def put(self, path, *, data=None):
+        self.put_calls.append((path, data))
+        return {
+            "id": "42",
+            "title": data["title"],
+            "version": {"number": data["version"]["number"]},
+            "_links": {"webui": "/wiki/spaces/DEV/pages/42"},
+        }
+
+
+def test_jira_adapter_uses_atlassian_sdk_with_scoped_gateway(monkeypatch) -> None:
+    client = FakeJira()
+    constructor_calls: list[tuple[tuple, dict]] = []
+
+    def jira_constructor(*args, **kwargs):
+        constructor_calls.append((args, kwargs))
+        return client
+
+    monkeypatch.setattr(adapters, "Jira", jira_constructor)
+
+    adapter = JiraAdapter("cloud id")
+    result = adapter.create_issue(
+        "secret",
+        {
+            "fields": {"project": {"key": "DEV"}, "issuetype": {"name": "Task"}, "summary": "A summary"},
+            "update": {"labels": [{"add": "x"}]},
+            "updateHistory": True,
+        },
+    )
+    read = adapter.read_issue("secret", "DEV-1", {"fields": ["summary", "customfield_10001"], "failFast": False})
+    updated = adapter.update_issue(
+        "secret",
+        "DEV-1",
+        {"fields": {"customfield_10001": "new"}, "notifyUsers": False, "returnIssue": True, "expand": "renderedFields"},
+    )
+    deleted = adapter.delete_issue("secret", "DEV-1", {"deleteSubtasks": True})
+
+    assert result == {"id": "10001", "key": "DEV-1", "self": "https://jira.test/DEV-1"}
+    assert read["fields"]["assignee"]["displayName"] == "Ada"
+    assert updated == {"issue_id_or_key": "DEV-1", "updated": True}
+    assert deleted == {"issue_id_or_key": "DEV-1", "deleted": True}
+    expected_constructor_call = (
+        (),
+        {
+            "url": "https://api.atlassian.com/ex/jira/cloud%20id",
+            "token": "secret",
+            "cloud": True,
+            "api_version": "3",
+        },
+    )
+    assert constructor_calls == [expected_constructor_call] * 4
+    assert client.post_calls == [
+        (
+            "rest/api/3/issue",
+            {
+                "fields": {"project": {"key": "DEV"}, "issuetype": {"name": "Task"}, "summary": "A summary"},
+                "update": {"labels": [{"add": "x"}]},
+            },
+            {"updateHistory": True},
+        )
+    ]
+    assert client.get_calls == [
+        ("rest/api/3/issue/DEV-1", {"fields": ["summary", "customfield_10001"], "failFast": False})
+    ]
+    assert client.put_calls == [
+        (
+            "rest/api/3/issue/DEV-1",
+            {"fields": {"customfield_10001": "new"}},
+            {"notifyUsers": False, "returnIssue": True, "expand": "renderedFields"},
+        )
+    ]
+    assert client.delete_calls == [("rest/api/3/issue/DEV-1", {"deleteSubtasks": True})]
+
+
+def test_bitbucket_adapter_uses_sdk_pagination_before_creating() -> None:
+    client = FakeBitbucket(
+        [
+            {
+                "id": 5,
+                "title": "Already open",
+                "source": {"branch": {"name": "feature/x"}},
+                "destination": {"branch": {"name": "main"}},
+            }
+        ]
+    )
+    settings = BitbucketSettings(workspace="w", repository="r", username="u")
+
+    result = BitbucketAdapter(settings, lambda token: client).create_pull_request("token", "New", "feature/x")
+
+    assert result.existing is True
+    assert client.list_calls == [(("w", "r"), {"state": "OPEN", "limit": 50})]
+    assert client.create_calls == []
+
+
+def test_bitbucket_adapter_constructs_cloud_sdk_from_v2_api_base(monkeypatch) -> None:
+    client = FakeBitbucket([])
+    constructor_calls: list[tuple[tuple, dict]] = []
+
+    def bitbucket_constructor(*args, **kwargs):
+        constructor_calls.append((args, kwargs))
+        return client
+
+    monkeypatch.setattr(adapters, "Bitbucket", bitbucket_constructor)
+    settings = BitbucketSettings(
+        workspace="workspace",
+        repository="repository",
+        username="developer@example.test",
+    )
+
+    assert BitbucketAdapter(settings).find_open_pull_request("secret", "feature/x") is None
+    assert constructor_calls == [
+        (
+            (),
+            {
+                "url": "https://api.bitbucket.org",
+                "username": "developer@example.test",
+                "password": "secret",
+                "cloud": True,
+            },
+        )
+    ]
+    assert client.api_root == ""
+    assert client.api_version == "2.0"
+
+
+def test_jenkins_adapter_uses_python_jenkins_for_builds_and_status(monkeypatch) -> None:
+    client = FakeJenkins()
+    constructor_calls: list[tuple[tuple, dict]] = []
+
+    def jenkins_constructor(*args, **kwargs):
+        constructor_calls.append((args, kwargs))
+        return client
+
+    monkeypatch.setattr(adapters.jenkins, "Jenkins", jenkins_constructor)
+    settings = JenkinsSettings(url="https://jenkins.test/", username="jenkins-user")
+    adapter = JenkinsAdapter(settings)
+    preset = JenkinsPreset(job="folder/job/test", allowed_parameters=["REF"])
+
+    queued = adapter.run_build("secret", "test", preset, {"REF": "main"})
+    status = adapter.get_build_status("secret", "test", preset, "18")
+
+    assert constructor_calls == [
+        (("https://jenkins.test",), {"username": "jenkins-user", "password": "secret", "timeout": 30}),
+        (("https://jenkins.test",), {"username": "jenkins-user", "password": "secret", "timeout": 30}),
+    ]
+    assert queued.queue_id == 18
+    assert queued.url == "https://jenkins.test/queue/item/18/"
+    assert client.build_calls == [("folder/job/test", {"REF": "main"}, None)]
+    assert status.build_number == 4
+    assert status.status == "success"
+    assert client.queue_calls == [18]
+    assert client.info_calls == [("folder/job/test", 4)]
+
+
+def test_confluence_adapter_uses_atlassian_sdk_v2_page_api(monkeypatch) -> None:
+    client = FakeConfluence()
+    constructor_calls: list[tuple[tuple, dict]] = []
+
+    def confluence_constructor(*args, **kwargs):
+        constructor_calls.append((args, kwargs))
+        return client
+
+    monkeypatch.setattr(adapters, "Confluence", confluence_constructor)
+    adapter = ConfluenceAdapter("cloud id")
+
+    page = adapter.get_page("secret", "42")
+    updated = adapter.update_page(
+        "secret",
+        page,
+        ConfluencePreset(page_id="42", title="Updated release notes"),
+        "<p>New</p>",
+    )
+
+    assert constructor_calls == [
+        (
+            (),
+            {
+                "url": "https://api.atlassian.com/ex/confluence/cloud%20id",
+                "token": "secret",
+                "cloud": True,
+                "api_root": "wiki/api",
+                "api_version": "v2",
+            },
+        ),
+        (
+            (),
+            {
+                "url": "https://api.atlassian.com/ex/confluence/cloud%20id",
+                "token": "secret",
+                "cloud": True,
+                "api_root": "wiki/api",
+                "api_version": "v2",
+            },
+        ),
+    ]
+    assert client.get_calls == [("wiki/api/v2/pages/42", {"body-format": "storage"})]
+    assert client.put_calls == [
+        (
+            "wiki/api/v2/pages/42",
+            {
+                "id": "42",
+                "status": "current",
+                "title": "Updated release notes",
+                "body": {"representation": "storage", "value": "<p>New</p>"},
+                "version": {"number": 4},
+            },
+        )
+    ]
+    assert updated.version == 4
+
+
+def test_sdk_permission_error_is_stable_and_token_safe() -> None:
+    class FailingJira:
+        def resource_url(self, *args, **kwargs):
+            return "rest/api/3/issue"
+
+        def get(self, *args, **kwargs):
+            raise ApiPermissionError("token=secret")
+
+    with pytest.raises(PermissionDeniedError) as raised:
+        JiraAdapter("cloud", lambda token: FailingJira()).read_issue("secret", "DEV-1", {})
+
+    assert "secret" not in str(raised.value)
+
+
+class _FakeHttpResponse:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_error"),
+    [
+        (401, AuthenticationError),
+        (403, PermissionDeniedError),
+        (409, ConflictError),
+        (429, NetworkError),
+    ],
+)
+def test_sdk_http_status_maps_to_a_stable_error_category(status_code, expected_error) -> None:
+    class FailingJira:
+        def resource_url(self, *args, **kwargs):
+            return "rest/api/3/issue"
+
+        def get(self, *args, **kwargs):
+            raise RequestException(f"token=secret status={status_code}", response=_FakeHttpResponse(status_code))
+
+    with pytest.raises(expected_error) as raised:
+        JiraAdapter("cloud", lambda token: FailingJira()).read_issue("secret", "DEV-1", {})
+
+    assert "secret" not in str(raised.value)
+
+
+def test_sdk_timeout_without_a_response_falls_back_to_a_generic_network_error() -> None:
+    """A timeout carries no HTTP status, so the outcome is inherently unclear; it must fail safe."""
+
+    class FailingJenkins:
+        def build_job(self, *args, **kwargs):
+            raise Timeout("Read timed out while using token=secret")
+
+    settings = JenkinsSettings(url="https://jenkins.test", username="jenkins-user")
+    preset = JenkinsPreset(job="folder/job/test", allowed_parameters=["REF"])
+
+    with pytest.raises(NetworkError) as raised:
+        JenkinsAdapter(settings, lambda token: FailingJenkins()).run_build("secret", "test", preset, {})
+
+    assert "secret" not in str(raised.value)
+    assert "timed out" not in str(raised.value).lower()
