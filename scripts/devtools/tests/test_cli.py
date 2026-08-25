@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
-from just_dev.cli import _CiOperationClient, app
+from just_dev.cli import Runtime, _CiOperationClient, _LazyBroker, app
 from just_dev.errors import ConflictError, DevtoolsError
 
 
@@ -41,6 +43,20 @@ verify_commands = ["true"]
     assert result.exit_code == 0, result.output
     assert '"page_id": "42"' in result.output
     assert "<h1>Notes</h1>" in result.output
+
+
+def test_runtime_service_selects_broker_from_the_ci_environment_variable(config, monkeypatch) -> None:
+    monkeypatch.setattr("just_dev.cli.load_project_config", lambda *args, **kwargs: config)
+    runtime = Runtime(config_path=None, output_format="text", project_root=Path("."))
+
+    monkeypatch.delenv("CI", raising=False)
+    assert isinstance(runtime.service("default").broker, _LazyBroker)
+
+    monkeypatch.setenv("CI", "true")
+    assert isinstance(runtime.service("default").broker, _CiOperationClient)
+
+    monkeypatch.setenv("CI", "false")
+    assert isinstance(runtime.service("default").broker, _LazyBroker)
 
 
 def test_ci_operation_client_uses_process_injected_credentials_without_broker(monkeypatch) -> None:
