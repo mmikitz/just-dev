@@ -15,7 +15,9 @@ Es gilt trunk-based development:
 - Große Vorhaben werden vertikal in rückwärtskompatible, separat merge-bare Schritte geteilt. Unfertige Funktionen werden über Konfiguration oder Feature Flags verborgen, nicht über langlebige Integrationsbranches.
 - Pull Requests zielen ausschließlich auf `main`, werden vor dem Merge gegen den aktuellen Stand von `main` geprüft und per Squash-Auto-merge integriert. Dadurch bleibt die Historie pro Änderung lesbar und `main` linear.
 
-In GitHub wird für `main` eine strikte Branch-Regel eingerichtet: keine Direkt-Pushes, Force-Pushes oder Löschungen; ein Approval; Zurücksetzen veralteter Reviews; Auflösung aller Gespräche; erforderliche CODEOWNERS-Reviews für die in `.github/CODEOWNERS` markierten Sicherheits- und Integrationspfade; keine Umgehung der Regel – auch nicht durch Administratoren. Als verpflichtende Checks werden exakt `Quality gates`, `Tests (Python 3.12)` und `Tests (Python 3.13)` ausgewählt.
+In GitHub wird für `main` eine strikte Branch-Regel eingerichtet: keine Direkt-Pushes, Force-Pushes oder Löschungen; ein Approval; Zurücksetzen veralteter Reviews; Auflösung aller Gespräche; erforderliche CODEOWNERS-Reviews für die in `.github/CODEOWNERS` markierten Sicherheits- und Integrationspfade. Als verpflichtende Checks werden exakt `Quality gates`, `Tests (Python 3.12)` und `Tests (Python 3.13)` ausgewählt.
+
+Solange `mmikitz` der einzige Collaborator des Repositories ist, kann diese Person das eigene Approval nicht erteilen (GitHub verbietet Self-Approval) – ohne Ausnahme wäre `main` dauerhaft nicht mehr mergebar. Der Repository-Owner steht daher explizit auf der GitHub-Bypass-Liste der Regel und kann eigene PRs ohne fremdes Approval mergen; alle anderen Bestandteile der Regel (Status-Checks, kein Force-Push/Delete, Conversation-Resolution, CODEOWNERS-Pflicht für jeden anderen Beitragenden) gelten uneingeschränkt, auch für den Owner. Sobald ein zweiter Collaborator mit Review-Rechten hinzukommt, sollte dieser Bypass-Eintrag entfernt werden.
 
 ## Test- und Gate-Modell
 
