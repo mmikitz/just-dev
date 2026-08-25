@@ -37,9 +37,13 @@ class JiraClient(Protocol):
 
     def get(self, path: str, *, params: Mapping[str, Any] | None = None) -> Any: ...
 
-    def post(self, path: str, *, data: Mapping[str, Any] | None = None, params: Mapping[str, Any] | None = None) -> Any: ...
+    def post(
+        self, path: str, *, data: Mapping[str, Any] | None = None, params: Mapping[str, Any] | None = None
+    ) -> Any: ...
 
-    def put(self, path: str, *, data: Mapping[str, Any] | None = None, params: Mapping[str, Any] | None = None) -> Any: ...
+    def put(
+        self, path: str, *, data: Mapping[str, Any] | None = None, params: Mapping[str, Any] | None = None
+    ) -> Any: ...
 
     def delete(self, path: str, *, params: Mapping[str, Any] | None = None) -> Any: ...
 
@@ -223,7 +227,9 @@ class JiraAdapter:
 
 
 class BitbucketAdapter:
-    def __init__(self, settings: BitbucketSettings, client_factory: Callable[[str], BitbucketClient] | None = None) -> None:
+    def __init__(
+        self, settings: BitbucketSettings, client_factory: Callable[[str], BitbucketClient] | None = None
+    ) -> None:
         self.settings = settings
         self._client_factory = client_factory or self._new_client
 
@@ -318,7 +324,9 @@ class JenkinsAdapter:
         return self._client_factory(token)
 
     @_sdk_errors("Jenkins")
-    def run_build(self, token: str, preset_name: str, preset: JenkinsPreset, parameters: Mapping[str, str]) -> BuildResult:
+    def run_build(
+        self, token: str, preset_name: str, preset: JenkinsPreset, parameters: Mapping[str, str]
+    ) -> BuildResult:
         queue_id = self._client(token).build_job(preset.job, parameters=dict(parameters))
         if not isinstance(queue_id, int):
             raise NetworkError("Jenkins did not return a queue ID.")

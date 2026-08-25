@@ -41,6 +41,9 @@ available, for example `just create-jira-issue bug "Summary"` and
 
 ```text
 just check-devtools
+just qa
+just check-changed
+just install-hooks
 just configure-auth | unlock-secrets | show-auth-status | lock-secrets
 just create-jira-issue bug "Summary" --description "Details" --fields '{"customfield_10010":"Prod"}'
 just read-jira-isdue ABC-123 --fields summary,status --expand names
@@ -120,3 +123,26 @@ Run the test suite with:
 ```text
 uv run --locked pytest
 ```
+
+Run the local pull-request gate from the repository root with:
+
+```text
+just qa
+```
+
+It checks the lockfile, formatting, linting, type safety, tests, and the
+coverage floor. The corresponding GitHub Actions workflow also builds the
+package and audits dependencies.
+
+## Pre-commit hook
+
+`just install-hooks` installs a [Lefthook](https://lefthook.dev)-managed
+`pre-commit` hook (configured in the repository root's `lefthook.yml`) that
+runs `just check-changed` before every commit. Unlike `just qa`, it scopes
+Ruff, mypy, and pytest to the files actually staged for that commit — for
+example, staging only `src/just_dev/broker.py` lints just that file and runs
+only `tests/test_broker.py`. A staged change with no clear source-to-test
+mapping (or a change to `tests/conftest.py`) falls back to the full suite.
+
+The hook is a local convenience, not a substitute for `just qa` or CI: it
+does not run in the pipeline, and `git commit --no-verify` skips it.

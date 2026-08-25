@@ -11,9 +11,7 @@ def config() -> ProjectConfig:
         {
             "atlassian": {"cloud_id": "cloud-123"},
             "jira": {
-                "presets": {
-                    "bug": {"project": "DEV", "issue_type": "Task", "labels": ["auto-filed"], "components": []}
-                }
+                "presets": {"bug": {"project": "DEV", "issue_type": "Task", "labels": ["auto-filed"], "components": []}}
             },
             "bitbucket": {
                 "workspace": "workspace",

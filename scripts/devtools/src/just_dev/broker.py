@@ -14,13 +14,15 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
+from multiprocessing.connection import (  # type: ignore[attr-defined]
+    AuthenticationError as ConnectionAuthenticationError,
+)
+from multiprocessing.connection import Client, Listener
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from multiprocessing.connection import AuthenticationError as ConnectionAuthenticationError
-from multiprocessing.connection import Client, Listener
 from platformdirs import user_cache_dir, user_config_dir, user_runtime_dir
 from pydantic import Field, ValidationError
 
@@ -36,7 +38,6 @@ from .errors import (
 )
 from .models import BrokerStatus, StrictModel
 from .redaction import redact_data, redact_text
-
 
 APP_NAME = "just-dev"
 REQUIRED_SCOPES = frozenset({"jira", "confluence", "bitbucket", "jenkins"})
@@ -80,7 +81,9 @@ def _runtime_directory() -> Path:
 
 
 def _safe_profile_name(name: str) -> str:
-    if not name or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for character in name):
+    if not name or any(
+        character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for character in name
+    ):
         raise InputValidationError("Profile names may contain only letters, numbers, underscores, and hyphens.")
     return name
 
@@ -90,7 +93,9 @@ def _atomic_json_write(path: Path, value: Mapping[str, Any]) -> None:
 
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
-        with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as handle:
+        with os.fdopen(
+            os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8"
+        ) as handle:
             json.dump(value, handle, sort_keys=True)
             handle.flush()
             os.fsync(handle.fileno())
@@ -244,7 +249,11 @@ def _broker_child(fd: int, endpoint: str, family: str, expires_at: float) -> int
     os.close(fd)
     encoded_key = bootstrap.get("auth_key")
     tokens = bootstrap.get("tokens")
-    if not isinstance(encoded_key, str) or not isinstance(tokens, dict) or not all(isinstance(value, str) for value in tokens.values()):
+    if (
+        not isinstance(encoded_key, str)
+        or not isinstance(tokens, dict)
+        or not all(isinstance(value, str) for value in tokens.values())
+    ):
         raise BrokerError("Credential broker bootstrap payload is incomplete.")
     try:
         auth_key = base64.urlsafe_b64decode(encoded_key.encode("ascii"))
@@ -274,7 +283,9 @@ def _broker_child(fd: int, endpoint: str, family: str, expires_at: float) -> int
                 request = _recv_json(connection)
                 kind = request.get("kind")
                 if kind == "status":
-                    _send_json(connection, {"ok": True, "expires_at": datetime.fromtimestamp(expires_at, UTC).isoformat()})
+                    _send_json(
+                        connection, {"ok": True, "expires_at": datetime.fromtimestamp(expires_at, UTC).isoformat()}
+                    )
                 elif kind == "shutdown":
                     _send_json(connection, {"ok": True})
                     shutdown.set()
@@ -378,7 +389,7 @@ class BrokerManager:
                 except OSError:
                     pass
                 if time.monotonic() >= deadline:
-                    raise BrokerError("Timed out waiting for another credential unlock to finish.")
+                    raise BrokerError("Timed out waiting for another credential unlock to finish.") from None
                 time.sleep(0.05)
             except OSError as exc:
                 raise BrokerError("Unable to lock credential-broker startup.") from exc
@@ -440,7 +451,9 @@ class BrokerManager:
             raise AuthenticationError("Credential broker has expired. Run unlock-secrets again.")
         return BrokerClient(state)
 
-    def unlock(self, tokens: Mapping[str, str], *, profile: str = "default", ttl_seconds: int = MAX_TTL_SECONDS) -> BrokerStatus:
+    def unlock(
+        self, tokens: Mapping[str, str], *, profile: str = "default", ttl_seconds: int = MAX_TTL_SECONDS
+    ) -> BrokerStatus:
         """Start a broker after its tokens arrive over an inherited anonymous pipe."""
 
         _safe_profile_name(profile)
@@ -477,7 +490,11 @@ class BrokerManager:
         ]
         try:
             if os.name == "nt":
-                process = subprocess.Popen(command, close_fds=False, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+                process = subprocess.Popen(
+                    command,
+                    close_fds=False,
+                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                )
             else:
                 process = subprocess.Popen(command, close_fds=True, pass_fds=(read_fd,), start_new_session=True)
         except OSError as exc:
@@ -568,7 +585,8 @@ def _main(argv: list[str] | None = None) -> int:
     try:
         return _broker_child(args.fd, args.endpoint, args.family, args.expires_at)
     except Exception:
-        # The parent presents a redacted generic startup failure; never print child diagnostics that could contain tokens.
+        # The parent presents only a redacted generic startup failure.
+        # Never print child diagnostics: they could contain tokens.
         return 1
 
 

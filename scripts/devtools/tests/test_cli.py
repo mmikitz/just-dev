@@ -34,7 +34,9 @@ verify_commands = ["true"]
     notes.write_text("# Notes", encoding="utf-8")
     monkeypatch.setenv("JUST_DEV_PROJECT_ROOT", str(tmp_path))
 
-    result = CliRunner().invoke(app, ["--config", str(config_path), "--format", "json", "confluence", "preview-release-notes", str(notes)])
+    result = CliRunner().invoke(
+        app, ["--config", str(config_path), "--format", "json", "confluence", "preview-release-notes", str(notes)]
+    )
 
     assert result.exit_code == 0, result.output
     assert '"page_id": "42"' in result.output

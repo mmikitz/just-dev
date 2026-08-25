@@ -60,12 +60,14 @@ class VerificationRunner:
         if recipe_command:
             if "JUST_DEV_REPLACE_ME" in recipe_command:
                 raise ConfigurationError(
-                    "Project verification is still the starter hook. Replace JUST_DEV_REPLACE_ME in scripts/devtools/recipes/project.just first."
+                    "Project verification is still the starter hook. Replace JUST_DEV_REPLACE_ME "
+                    "in scripts/devtools/recipes/project.just first."
                 )
             commands = [recipe_command]
         elif project.starter_hook or not project.verify_commands:
             raise ConfigurationError(
-                "Project verification is still the starter hook. Run it through just or configure direct-CLI verification commands."
+                "Project verification is still the starter hook. Run it through just or configure "
+                "direct-CLI verification commands."
             )
         else:
             commands = project.verify_commands
@@ -89,8 +91,7 @@ def current_git_branch(project_root: Path) -> str:
             ["git", "-C", str(project_root), "rev-parse", "--abbrev-ref", "HEAD"],
             check=True,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise InputValidationError("Could not determine the current Git branch.") from exc
@@ -161,7 +162,9 @@ class DevtoolsService:
             problems.append("just >= 1.55 is required but just is not installed")
         else:
             try:
-                version_output = subprocess.check_output([just, "--version"], text=True, stderr=subprocess.STDOUT).strip()
+                version_output = subprocess.check_output(
+                    [just, "--version"], text=True, stderr=subprocess.STDOUT
+                ).strip()
                 match = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", version_output)
                 if not match or tuple(int(part or 0) for part in match.groups()) < (1, 55, 0):
                     problems.append(f"just >= 1.55 is required (found: {version_output})")
@@ -229,9 +232,7 @@ class DevtoolsService:
     ) -> dict[str, Any]:
         self._validate_atlassian()
         parameters = {
-            key: value
-            for key, value in (("fields", fields), ("expand", expand), ("properties", properties))
-            if value
+            key: value for key, value in (("fields", fields), ("expand", expand), ("properties", properties)) if value
         }
         return self.broker.invoke(
             "jira.read_issue",
@@ -304,7 +305,12 @@ class DevtoolsService:
         branch = source_branch or current_git_branch(self.project_root)
         preview = PreviewResult(
             action="create Bitbucket pull request",
-            details={"title": title, "source_branch": branch, "target_branch": self.config.bitbucket.target_branch, "no_verify": no_verify},
+            details={
+                "title": title,
+                "source_branch": branch,
+                "target_branch": self.config.bitbucket.target_branch,
+                "no_verify": no_verify,
+            },
         )
         if dry_run:
             return preview
@@ -312,10 +318,10 @@ class DevtoolsService:
             announce(preview)
         if not no_verify:
             self.verification_runner.run()
-        confirm_mutation("create the pull request" if not no_verify else "skip verification and create the pull request", yes=yes)
-        result = self.broker.invoke(
-            "bitbucket.create_pull_request", self._payload(title=title, source_branch=branch)
+        confirm_mutation(
+            "create the pull request" if not no_verify else "skip verification and create the pull request", yes=yes
         )
+        result = self.broker.invoke("bitbucket.create_pull_request", self._payload(title=title, source_branch=branch))
         return PullRequestResult.model_validate(result)
 
     def show_pull_request(self, pull_request_id: str | None = None) -> PullRequestResult | PreviewResult:
@@ -327,7 +333,9 @@ class DevtoolsService:
         branch = current_git_branch(self.project_root)
         result = self.broker.invoke("bitbucket.find_open_pull_request", self._payload(source_branch=branch))
         if not result.get("found"):
-            return PreviewResult(action="show Bitbucket pull request", details={"source_branch": branch, "found": False})
+            return PreviewResult(
+                action="show Bitbucket pull request", details={"source_branch": branch, "found": False}
+            )
         return PullRequestResult.model_validate(result)
 
     def run_build(
@@ -347,7 +355,9 @@ class DevtoolsService:
             raise InputValidationError(
                 f"Jenkins preset '{preset_name}' does not allow parameter(s): {', '.join(sorted(disallowed))}."
             )
-        preview = PreviewResult(action="run Jenkins build", details={"preset": preset_name, "job": preset.job, "parameters": values})
+        preview = PreviewResult(
+            action="run Jenkins build", details={"preset": preset_name, "job": preset.job, "parameters": values}
+        )
         if dry_run:
             return preview
         if announce:

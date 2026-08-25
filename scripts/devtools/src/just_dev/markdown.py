@@ -6,7 +6,6 @@ import html
 import re
 from urllib.parse import urlparse
 
-
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _UNORDERED = re.compile(r"^\s*[-*+]\s+(.+?)\s*$")
 _ORDERED = re.compile(r"^\s*\d+[.)]\s+(.+?)\s*$")
@@ -57,7 +56,9 @@ def markdown_to_storage(markdown: str) -> str:
     def flush_list() -> None:
         nonlocal list_items, list_type
         if list_type and list_items:
-            blocks.append(f"<{list_type}>" + "".join(f"<li>{_inline(item)}</li>" for item in list_items) + f"</{list_type}>")
+            blocks.append(
+                f"<{list_type}>" + "".join(f"<li>{_inline(item)}</li>" for item in list_items) + f"</{list_type}>"
+            )
         list_items = []
         list_type = None
 
@@ -68,7 +69,7 @@ def markdown_to_storage(markdown: str) -> str:
             blocks.append(
                 '<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA['
                 + content
-                + ']]></ac:plain-text-body></ac:structured-macro>'
+                + "]]></ac:plain-text-body></ac:structured-macro>"
             )
             code_lines = None
 
@@ -97,13 +98,14 @@ def markdown_to_storage(markdown: str) -> str:
             continue
         unordered = _UNORDERED.match(line)
         ordered = _ORDERED.match(line)
-        if unordered or ordered:
+        list_match = unordered or ordered
+        if list_match:
             flush_paragraph()
             next_type = "ul" if unordered else "ol"
             if list_type and list_type != next_type:
                 flush_list()
             list_type = next_type
-            list_items.append((unordered or ordered).group(1))
+            list_items.append(list_match.group(1))
             continue
         flush_list()
         paragraph.append(line)

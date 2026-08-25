@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# CI never needs write access or repository secrets.
+permissions:
+  contents: read
+
+# A newer push supersedes an older run for the same pull request or branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: scripts/devtools
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.5"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: scripts/devtools/uv.lock
+      - name: Verify the lockfile
+        run: uv lock --check
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Check formatting
+        run: uv run --locked ruff format --check .
+      - name: Lint
+        run: uv run --locked ruff check .
+      - name: Type check
+        run: uv run --locked mypy src
+      - name: Build distribution artifacts
+        run: uv build
+      - name: Export pinned third-party dependencies for the audit
+        run: >
+          uv export --locked --all-groups --no-emit-project --format requirements.txt
+          --output-file /tmp/just-dev-audit-requirements.txt > /dev/null
+      - name: Audit dependencies
+        run: >
+          uv run --locked pip-audit --strict --disable-pip --require-hashes --progress-spinner off
+          -r /tmp/just-dev-audit-requirements.txt
+
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up uv and Python ${{ matrix.python }}
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.5"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-dependency-glob: scripts/devtools/uv.lock
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Run tests and enforce the coverage baseline
+        if: matrix.python == '3.12'
+        run: uv run --locked pytest --cov=just_dev --cov-branch --cov-report=term-missing
+      - name: Run tests
+        if: matrix.python != '3.12'
+        run: uv run --locked pytest

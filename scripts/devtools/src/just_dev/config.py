@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from .errors import ConfigurationError
 from .models import ProjectConfig
-
 
 PLACEHOLDER_MARKERS = ("REPLACE", "example.invalid", "JUST_DEV_REPLACE_ME")
 
@@ -58,7 +58,7 @@ def require_real_value(value: str, label: str) -> str:
     return value
 
 
-def require_preset(mapping: dict[str, object], name: str, label: str) -> object:
+def require_preset[Preset](mapping: Mapping[str, Preset], name: str, label: str) -> Preset:
     try:
         return mapping[name]
     except KeyError as exc:

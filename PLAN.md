@@ -16,6 +16,7 @@ Intern bleiben die Tools als `just`-Module organisiert. Flache Aliases bilden di
 
 ```text
 justfile                                  # nur Import-Zeile
+lefthook.yml                              # ruft nur `just check-changed` auf
 scripts/devtools/
 ├── justfile                              # Module + flache Aliases
 ├── recipes/
@@ -25,7 +26,9 @@ scripts/devtools/
 │   ├── bitbucket.just
 │   ├── jenkins.just
 │   ├── confluence.just
-│   └── project.just                      # projektspezifischer Verify-/CI-Hook
+│   ├── project.just                      # projektspezifischer Verify-/CI-Hook
+│   ├── quality.just                      # lokaler Pull-Request-Qualitätsgate + Pre-commit-Hook
+│   └── check_changed.py                  # Auswahl-Logik für den Pre-commit-Hook
 ├── config/
 │   ├── project.example.toml
 │   └── project.toml                      # nach Übernahme eingecheckt
@@ -40,7 +43,7 @@ scripts/devtools/
 - Jedes Modul importiert `common.just`, setzt sein Arbeitsverzeichnis auf `scripts/devtools/` und startet die CLI mit `uv run --locked just-dev`.
 - Der Projektroot wird über `JUST_DEV_PROJECT_ROOT=justfile_directory()` an die CLI übergeben; dadurch funktionieren Git-Erkennung, Markdown-Dateien und Projektchecks unabhängig vom aktuellen Verzeichnis.
 - Recipe-Parameter werden als exportierte `JUST_DEV_*`-Variablen weitergereicht. Benutzereingaben werden nicht in Shell-Befehle interpoliert, wodurch Linux, PowerShell und WSL gleich behandelt werden.
-- Voraussetzung: Python 3.12+, uv und `just >= 1.55`. Die lokal vorhandene Version 1.21 muss aktualisiert werden.
+- Voraussetzung: Python 3.12+, uv und `just >= 1.55`. Die lokal vorhandene Version 1.57 erfüllt diese Anforderung.
 
 ## Öffentliche Befehle
 
@@ -49,6 +52,9 @@ Die flache Verb–Objekt-Form ist kanonisch. Die Tool-Variante ruft dasselbe Rec
 | Bevorzugter Aufruf                  | Tool-Namespace                               |
 | ----------------------------------- | -------------------------------------------- |
 | `just check-devtools`               | `just devtools check-devtools`               |
+| `just qa`                           | `just quality qa`                            |
+| `just check-changed`                | `just quality check-changed`                 |
+| `just install-hooks`                | `just quality install-hooks`                 |
 | `just configure-auth`               | `just auth configure-auth`                   |
 | `just unlock-secrets`               | `just auth unlock-secrets`                   |
 | `just show-auth-status`             | `just auth show-auth-status`                 |
@@ -70,6 +76,8 @@ Das interne `scripts/devtools/justfile` definiert dafür beispielsweise:
 
 ```just
 mod jira 'recipes/jira.just'
+mod quality 'recipes/quality.just'
+alias qa := quality::qa
 alias create-jira-issue := jira::create-jira-issue
 alias read-jira-isdue := jira::read-jira-isdue
 alias update-jira-issue := jira::update-jira-issue
@@ -113,6 +121,7 @@ Mutierende Recipes besitzen die einheitlichen Flags `--dry-run` und `--yes`. Ohn
 - Broker-Tests für Unlock/Status/Lock, Acht-Stunden-Ablauf, parallele Unlocks, falsche IPC-Authentifizierung, Prozessabstürze und Secret-Leak-Prüfungen.
 - Adapter-Vertragstests mit SDK-Client-Mocks für Gateway-Konfiguration, Authentifizierung, Payloads, Pagination, 401/403/409/429 und unklare Timeout-Ausgänge.
 - Just-Tests prüfen sowohl jeden flachen Alias als auch die äquivalente Tool-Namespace-Variante, einschließlich Argumenten mit Leerzeichen und Sonderzeichen.
+- Unit-Tests für die Auswahl-Logik von `check-changed` (Quelle-zu-Test-Zuordnung, Fallback auf die volle Suite).
 - Plattformmatrix: Linux, natives Windows und WSL. Alle drei führen `just run-ci` aus; WSL wird über einen Windows-Agenten mit `wsl.exe` gestartet.
 - Schreibende Smoke-Tests laufen nur gegen dedizierte Testressourcen und mit explizitem Opt-in.
 - Abnahme: Nach dem Kopieren von `scripts/devtools/` und dem Ergänzen einer Import-Zeile funktionieren beide Aufrufformen, neue Herdr-Panes verwenden den laufenden Broker ohne erneutes KeePass-Prompt, und alle vier Tool-Integrationen erfüllen ihren vertikalen Slice.
@@ -121,6 +130,7 @@ Mutierende Recipes besitzen die einheitlichen Flags `--dry-run` und `--yes`. Ohn
 
 - Atlassian Cloud mit scoped Tokens; kein Data Center, kein klassisches unscoped Token und kein OAuth 3LO in v1.
 - Keine Merge-, Deploy-, Bulk- oder administrativen Aktionen außerhalb des expliziten Jira-Issue-Delete-Targets.
-- Abgesehen von der Root-Import-Zeile liegen sämtliche übertragbaren Dateien unter `scripts/devtools/`.
+- Abgesehen von der Root-Import-Zeile und dem Lefthook-Zeiger `lefthook.yml` (der nur `just check-changed` aufruft) liegen sämtliche übertragbaren Dateien unter `scripts/devtools/`. Lefthook selbst sucht `lefthook.yml` ausschließlich im Repo-Root; eine tiefere Ablage ist ohne zusätzliche, nicht dokumentierte Umgebungsvariablen nicht zuverlässig möglich.
+- Der Pre-commit-Hook ist eine lokale, optionale Beschleunigung (`just install-hooks`) und kein Ersatz für `just qa` oder die CI-Gates; er läuft nicht in der Pipeline und lässt sich mit `git commit --no-verify` umgehen.
 - Benutzerlokale Auth-Profile liegen absichtlich außerhalb des Projekts und werden nicht mitkopiert.
 - Keine `.env`-Dateien oder globalen Shellvariablen für lokale Secrets.
