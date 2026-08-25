@@ -6,12 +6,9 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-
 REDACTED = "[REDACTED]"
 _AUTH_HEADER = re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer|basic)\s+[^\s,;]+")
-_TOKEN_ASSIGNMENT = re.compile(
-    r"(?i)\b(token|password|secret|api[_-]?key)\b\s*([:=])\s*([^\s,;]+)"
-)
+_TOKEN_ASSIGNMENT = re.compile(r"(?i)\b(token|password|secret|api[_-]?key)\b\s*([:=])\s*([^\s,;]+)")
 _URL_CREDENTIALS = re.compile(r"(https?://)[^\s/@:]+:[^\s/@]+@")
 _SENSITIVE_KEY = re.compile(r"(?i)(token|password|secret|api[_-]?key|authorization)")
 

@@ -1,0 +1,7 @@
+# Security- and integration-sensitive paths require the repository owner.
+/.github/ @mmikitz
+/scripts/devtools/config/ @mmikitz
+/scripts/devtools/recipes/auth.just @mmikitz
+/scripts/devtools/src/just_dev/adapters.py @mmikitz
+/scripts/devtools/src/just_dev/broker.py @mmikitz
+/scripts/devtools/src/just_dev/operations.py @mmikitz

@@ -6,10 +6,14 @@
 .pytest_cache/
 __pycache__/
 *.py[cod]
+.coverage
+coverage.xml
+coverage.json
+htmlcov/
+dist/
 
 # Local secrets and environment overrides
 .env
 .env.*
 !.env.example
 *.kdbx
-

@@ -1,6 +1,7 @@
 # This file intentionally contains only module declarations and public aliases.
 # Keeping settings out of this module prevents collisions with a host justfile.
 mod devtools 'recipes/common.just'
+mod quality 'recipes/quality.just'
 mod auth 'recipes/auth.just'
 mod jira 'recipes/jira.just'
 mod bitbucket 'recipes/bitbucket.just'
@@ -9,6 +10,9 @@ mod confluence 'recipes/confluence.just'
 mod project 'recipes/project.just'
 
 alias check-devtools := devtools::check-devtools
+alias qa := quality::qa
+alias check-changed := quality::check-changed
+alias install-hooks := quality::install-hooks
 alias configure-auth := auth::configure-auth
 alias unlock-secrets := auth::unlock-secrets
 alias show-auth-status := auth::show-auth-status

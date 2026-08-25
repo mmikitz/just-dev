@@ -1,0 +1,4 @@
+pre-commit:
+  commands:
+    quality-gate:
+      run: just check-changed

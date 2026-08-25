@@ -15,11 +15,10 @@ from pydantic import BaseModel
 from .broker import BrokerManager, KeePassProfile, ProfileStore, validate_profile
 from .config import load_project_config, project_root_from_environment
 from .errors import AuthenticationError, DevtoolsError, InputValidationError
-from .operations import execute_operation
 from .models import PreviewResult
+from .operations import execute_operation
 from .redaction import redact_data, redact_text
 from .workflows import DevtoolsService
-
 
 app = typer.Typer(help="Portable, least-privilege developer workflows.", no_args_is_help=True)
 auth_app = typer.Typer(help="Manage the local KeePass-backed credential broker.", no_args_is_help=True)
@@ -219,14 +218,16 @@ def configure_auth(
     context: typer.Context,
     database: Annotated[Path | None, typer.Option("--database", help="Path to the KeePass .kdbx database.")] = None,
     keyfile: Annotated[Path | None, typer.Option("--keyfile", help="Optional KeePass keyfile.")] = None,
-    entry: Annotated[list[str], typer.Option("--entry", help="Repeat: jira|confluence|bitbucket|jenkins=entry UUID.")] = [],
+    entry: Annotated[
+        list[str] | None, typer.Option("--entry", help="Repeat: jira|confluence|bitbucket|jenkins=entry UUID.")
+    ] = None,
     profile: Annotated[str, typer.Option("--profile", help="Local profile name.")] = "default",
 ) -> None:
     """Store a local profile containing paths and entry UUIDs, never tokens."""
 
     def action() -> PreviewResult:
         chosen_database = database or Path(typer.prompt("KeePass database path"))
-        parsed_entries = _parse_entries(entry)
+        parsed_entries = _parse_entries(entry or [])
         if not parsed_entries:
             parsed_entries = {
                 scope: typer.prompt(f"KeePass entry UUID for {scope}")
@@ -296,14 +297,18 @@ def create_jira_issue(
 ) -> None:
     _execute(
         context,
-        lambda: _runtime(context).service(profile).create_jira_issue(
-            _argument_or_environment(preset, "JUST_DEV_JIRA_PRESET", "Jira preset"),
-            _argument_or_environment(summary, "JUST_DEV_JIRA_SUMMARY", "Jira summary"),
-            description=_optional_value_or_environment(description, "JUST_DEV_JIRA_DESCRIPTION"),
-            fields=_json_object_or_environment(fields, "JUST_DEV_JIRA_FIELDS", "Jira fields"),
-            dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-            yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-            announce=lambda preview: _emit(context, {"preview": preview}),
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .create_jira_issue(
+                _argument_or_environment(preset, "JUST_DEV_JIRA_PRESET", "Jira preset"),
+                _argument_or_environment(summary, "JUST_DEV_JIRA_SUMMARY", "Jira summary"),
+                description=_optional_value_or_environment(description, "JUST_DEV_JIRA_DESCRIPTION"),
+                fields=_json_object_or_environment(fields, "JUST_DEV_JIRA_FIELDS", "Jira fields"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
         ),
     )
 
@@ -325,11 +330,15 @@ def read_jira_isdue(
 ) -> None:
     _execute(
         context,
-        lambda: _runtime(context).service(profile).read_jira_issue(
-            _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
-            fields=_optional_value_or_environment(fields, "JUST_DEV_JIRA_READ_FIELDS"),
-            expand=_optional_value_or_environment(expand, "JUST_DEV_JIRA_READ_EXPAND"),
-            properties=_optional_value_or_environment(properties, "JUST_DEV_JIRA_READ_PROPERTIES"),
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .read_jira_issue(
+                _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
+                fields=_optional_value_or_environment(fields, "JUST_DEV_JIRA_READ_FIELDS"),
+                expand=_optional_value_or_environment(expand, "JUST_DEV_JIRA_READ_EXPAND"),
+                properties=_optional_value_or_environment(properties, "JUST_DEV_JIRA_READ_PROPERTIES"),
+            )
         ),
     )
 
@@ -355,14 +364,18 @@ def update_jira_issue(
 ) -> None:
     _execute(
         context,
-        lambda: _runtime(context).service(profile).update_jira_issue(
-            _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
-            summary=_optional_value_or_environment(summary, "JUST_DEV_JIRA_SUMMARY"),
-            description=_optional_value_or_environment(description, "JUST_DEV_JIRA_DESCRIPTION"),
-            fields=_json_object_or_environment(request, "JUST_DEV_JIRA_UPDATE_REQUEST", "Jira update request"),
-            dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-            yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-            announce=lambda preview: _emit(context, {"preview": preview}),
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .update_jira_issue(
+                _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
+                summary=_optional_value_or_environment(summary, "JUST_DEV_JIRA_SUMMARY"),
+                description=_optional_value_or_environment(description, "JUST_DEV_JIRA_DESCRIPTION"),
+                fields=_json_object_or_environment(request, "JUST_DEV_JIRA_UPDATE_REQUEST", "Jira update request"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
         ),
     )
 
@@ -380,12 +393,16 @@ def delete_jira_issue(
 ) -> None:
     _execute(
         context,
-        lambda: _runtime(context).service(profile).delete_jira_issue(
-            _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
-            delete_subtasks=_flag_or_environment(delete_subtasks, "JUST_DEV_JIRA_DELETE_SUBTASKS"),
-            dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-            yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-            announce=lambda preview: _emit(context, {"preview": preview}),
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .delete_jira_issue(
+                _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
+                delete_subtasks=_flag_or_environment(delete_subtasks, "JUST_DEV_JIRA_DELETE_SUBTASKS"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
         ),
     )
 
@@ -396,17 +413,23 @@ def create_pull_request(
     title: Annotated[str | None, typer.Argument(help="Pull request title.")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
-    no_verify: Annotated[bool, typer.Option("--no-verify", help="Skip project verification after explicit confirmation.")] = False,
+    no_verify: Annotated[
+        bool, typer.Option("--no-verify", help="Skip project verification after explicit confirmation.")
+    ] = False,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
 ) -> None:
     _execute(
         context,
-        lambda: _runtime(context).service(profile).create_pull_request(
-            _argument_or_environment(title, "JUST_DEV_PR_TITLE", "Pull request title"),
-            dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-            yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-            no_verify=_flag_or_environment(no_verify, "JUST_DEV_NO_VERIFY"),
-            announce=lambda preview: _emit(context, {"preview": preview}),
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .create_pull_request(
+                _argument_or_environment(title, "JUST_DEV_PR_TITLE", "Pull request title"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                no_verify=_flag_or_environment(no_verify, "JUST_DEV_NO_VERIFY"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
         ),
     )
 
@@ -425,19 +448,26 @@ def show_pull_request(
 def run_build(
     context: typer.Context,
     preset: Annotated[str | None, typer.Argument(help="Named Jenkins preset.")] = None,
-    parameter: Annotated[list[str], typer.Option("--parameter", "-p", help="Allowed KEY=VALUE parameter; repeatable.")] = [],
+    parameter: Annotated[
+        list[str] | None, typer.Option("--parameter", "-p", help="Allowed KEY=VALUE parameter; repeatable.")
+    ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
 ) -> None:
     _execute(
         context,
-        lambda: _runtime(context).service(profile).run_build(
-            _argument_or_environment(preset, "JUST_DEV_BUILD_PRESET", "Jenkins preset"),
-            parameters=parameter or ([os.environ["JUST_DEV_BUILD_PARAMETER"]] if os.environ.get("JUST_DEV_BUILD_PARAMETER") else []),
-            dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-            yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-            announce=lambda preview: _emit(context, {"preview": preview}),
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .run_build(
+                _argument_or_environment(preset, "JUST_DEV_BUILD_PRESET", "Jenkins preset"),
+                parameters=parameter
+                or ([os.environ["JUST_DEV_BUILD_PARAMETER"]] if os.environ.get("JUST_DEV_BUILD_PARAMETER") else []),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
         ),
     )
 
@@ -451,9 +481,13 @@ def show_build_status(
 ) -> None:
     _execute(
         context,
-        lambda: _runtime(context).service(profile).show_build_status(
-            _argument_or_environment(preset, "JUST_DEV_BUILD_PRESET", "Jenkins preset"),
-            _argument_or_environment(reference, "JUST_DEV_BUILD_REFERENCE", "Build reference"),
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .show_build_status(
+                _argument_or_environment(preset, "JUST_DEV_BUILD_PRESET", "Jenkins preset"),
+                _argument_or_environment(reference, "JUST_DEV_BUILD_REFERENCE", "Build reference"),
+            )
         ),
     )
 
@@ -468,9 +502,15 @@ def preview_release_notes(
     del profile
     _execute(
         context,
-        lambda: _runtime(context).service(require_broker=False).preview_release_notes(
-            _argument_or_environment(str(file) if file else None, "JUST_DEV_RELEASE_NOTES_FILE", "Release-notes file"),
-            preset_name=_option_or_environment(preset, "JUST_DEV_CONFLUENCE_PRESET", "release-notes"),
+        lambda: (
+            _runtime(context)
+            .service(require_broker=False)
+            .preview_release_notes(
+                _argument_or_environment(
+                    str(file) if file else None, "JUST_DEV_RELEASE_NOTES_FILE", "Release-notes file"
+                ),
+                preset_name=_option_or_environment(preset, "JUST_DEV_CONFLUENCE_PRESET", "release-notes"),
+            )
         ),
     )
 
@@ -485,13 +525,19 @@ def publish_release_notes(
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
 ) -> None:
     def action() -> Any:
-        path = _argument_or_environment(str(file) if file else None, "JUST_DEV_RELEASE_NOTES_FILE", "Release-notes file")
-        return _runtime(context).service(profile).publish_release_notes(
-            path,
-            preset_name=_option_or_environment(preset, "JUST_DEV_CONFLUENCE_PRESET", "release-notes"),
-            dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-            yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-            announce=lambda page: _emit(context, {"preview": page}),
+        path = _argument_or_environment(
+            str(file) if file else None, "JUST_DEV_RELEASE_NOTES_FILE", "Release-notes file"
+        )
+        return (
+            _runtime(context)
+            .service(profile)
+            .publish_release_notes(
+                path,
+                preset_name=_option_or_environment(preset, "JUST_DEV_CONFLUENCE_PRESET", "release-notes"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda page: _emit(context, {"preview": page}),
+            )
         )
 
     _execute(context, action)

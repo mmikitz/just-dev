@@ -10,13 +10,15 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).parents[1]
 REPO_ROOT = ROOT.parents[1]
 
 # Every public alias and the module::recipe it must behave identically to (PLAN.md's command table).
 ALIASES = (
     "check-devtools",
+    "qa",
+    "check-changed",
+    "install-hooks",
     "configure-auth",
     "unlock-secrets",
     "show-auth-status",
@@ -123,7 +125,7 @@ RECIPES: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], tuple[str,
 # A stand-in for `uv` that records how it was invoked instead of running the real CLI. This
 # isolates the just-layer plumbing (recipe parameters -> exported JUST_DEV_* env vars -> command)
 # from the Python CLI itself, which has its own test coverage.
-_FAKE_UV_SOURCE = '''#!/usr/bin/env python3
+_FAKE_UV_SOURCE = """#!/usr/bin/env python3
 import json
 import os
 import sys
@@ -140,7 +142,7 @@ with open(os.environ["JUST_DEV_TEST_CAPTURE_FILE"], "w", encoding="utf-8") as ha
         },
         handle,
     )
-'''
+"""
 
 requires_just = pytest.mark.skipif(shutil.which("just") is None, reason="just is not installed")
 
