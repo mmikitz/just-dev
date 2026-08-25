@@ -78,6 +78,8 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
           cache-dependency-glob: scripts/devtools/uv.lock
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - name: Install locked dependencies
         run: uv sync --locked --all-groups
       - name: Run tests and enforce the coverage baseline
