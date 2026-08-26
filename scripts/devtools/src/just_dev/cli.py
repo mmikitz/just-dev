@@ -525,6 +525,8 @@ def update_jira_issue(
         str | None,
         typer.Option("--description", help="New plain-text description, sent as Atlassian Document Format."),
     ] = None,
+    labels: Annotated[str | None, typer.Option("--labels", help="Comma-separated labels; replaces all labels.")] = None,
+    priority: Annotated[str | None, typer.Option("--priority", help="New priority name, e.g. High.")] = None,
     request: Annotated[
         str | None,
         typer.Argument(
@@ -549,7 +551,99 @@ def update_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 summary=_optional_value_or_environment(summary, "JUST_DEV_JIRA_SUMMARY"),
                 description=_optional_value_or_environment(description, "JUST_DEV_JIRA_DESCRIPTION"),
+                labels=_optional_value_or_environment(labels, "JUST_DEV_JIRA_LABELS"),
+                priority=_optional_value_or_environment(priority, "JUST_DEV_JIRA_PRIORITY"),
                 fields=_json_object_or_environment(request, "JUST_DEV_JIRA_UPDATE_REQUEST", "Jira update request"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
+        ),
+    )
+
+
+@jira_app.command("assign-jira-issue")
+def assign_jira_issue(
+    context: typer.Context,
+    issue_id_or_key: Annotated[str | None, typer.Argument(help="Issue ID or key, e.g. ABC-123.")] = None,
+    assignee: Annotated[str | None, typer.Option("--assignee", help="Assignee's Jira account ID.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+    _execute(
+        context,
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .assign_jira_issue(
+                _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
+                _argument_or_environment(assignee, "JUST_DEV_JIRA_ASSIGNEE", "Assignee account ID"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
+        ),
+    )
+
+
+@jira_app.command("comment-jira-issue")
+def comment_jira_issue(
+    context: typer.Context,
+    issue_id_or_key: Annotated[str | None, typer.Argument(help="Issue ID or key, e.g. ABC-123.")] = None,
+    comment: Annotated[str | None, typer.Argument(help="Comment text, sent as Atlassian Document Format.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+    _execute(
+        context,
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .comment_jira_issue(
+                _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
+                _argument_or_environment(comment, "JUST_DEV_JIRA_COMMENT", "Comment"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
+        ),
+    )
+
+
+@jira_app.command("transition-jira-issue")
+def transition_jira_issue(
+    context: typer.Context,
+    issue_id_or_key: Annotated[str | None, typer.Argument(help="Issue ID or key, e.g. ABC-123.")] = None,
+    status: Annotated[str | None, typer.Argument(help="Target status name, e.g. 'Done'.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+    _execute(
+        context,
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .transition_jira_issue(
+                _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
+                _argument_or_environment(status, "JUST_DEV_JIRA_STATUS", "Target status"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
                 yes=_flag_or_environment(yes, "JUST_DEV_YES"),
                 announce=lambda preview: _emit(context, {"preview": preview}),
@@ -594,6 +688,11 @@ def delete_jira_issue(
 def create_pull_request(
     context: typer.Context,
     title: Annotated[str | None, typer.Argument(help="Pull request title.")] = None,
+    description: Annotated[str | None, typer.Option("--description", help="Pull request description.")] = None,
+    reviewer: Annotated[list[str] | None, typer.Option("--reviewer", help="Reviewer username; repeatable.")] = None,
+    close_source_branch: Annotated[
+        bool, typer.Option("--close-source-branch", help="Close the source branch after merge.")
+    ] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
     no_verify: Annotated[
@@ -613,6 +712,10 @@ def create_pull_request(
             .service(profile)
             .create_pull_request(
                 _argument_or_environment(title, "JUST_DEV_PR_TITLE", "Pull request title"),
+                description=_optional_value_or_environment(description, "JUST_DEV_PR_DESCRIPTION"),
+                reviewer=reviewer
+                or ([os.environ["JUST_DEV_PR_REVIEWER"]] if os.environ.get("JUST_DEV_PR_REVIEWER") else []),
+                close_source_branch=_flag_or_environment(close_source_branch, "JUST_DEV_PR_CLOSE_SOURCE_BRANCH"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
                 yes=_flag_or_environment(yes, "JUST_DEV_YES"),
                 no_verify=_flag_or_environment(no_verify, "JUST_DEV_NO_VERIFY"),
@@ -635,6 +738,162 @@ def show_pull_request(
     _set_command_output_options(context, output_format, safe)
     value = pull_request_id if pull_request_id is not None else os.environ.get("JUST_DEV_PR_ID") or None
     _execute(context, lambda: _runtime(context).service(profile).show_pull_request(value))
+
+
+@bitbucket_app.command("approve-pull-request")
+def approve_pull_request(
+    context: typer.Context,
+    pull_request_id: Annotated[str | None, typer.Argument(help="Pull request ID.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+    _execute(
+        context,
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .approve_pull_request(
+                _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
+        ),
+    )
+
+
+@bitbucket_app.command("decline-pull-request")
+def decline_pull_request(
+    context: typer.Context,
+    pull_request_id: Annotated[str | None, typer.Argument(help="Pull request ID.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+    _execute(
+        context,
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .decline_pull_request(
+                _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
+        ),
+    )
+
+
+@bitbucket_app.command("comment-pull-request")
+def comment_pull_request(
+    context: typer.Context,
+    pull_request_id: Annotated[str | None, typer.Argument(help="Pull request ID.")] = None,
+    comment: Annotated[str | None, typer.Argument(help="Comment text.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+    _execute(
+        context,
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .comment_pull_request(
+                _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
+                _argument_or_environment(comment, "JUST_DEV_PR_COMMENT", "Comment"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
+        ),
+    )
+
+
+@bitbucket_app.command("add-pull-request-reviewer")
+def add_pull_request_reviewer(
+    context: typer.Context,
+    pull_request_id: Annotated[str | None, typer.Argument(help="Pull request ID.")] = None,
+    reviewer: Annotated[str | None, typer.Argument(help="Reviewer username.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+    _execute(
+        context,
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .add_pull_request_reviewer(
+                _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
+                _argument_or_environment(reviewer, "JUST_DEV_PR_REVIEWER_NAME", "Reviewer"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
+        ),
+    )
+
+
+@bitbucket_app.command("merge-pull-request")
+def merge_pull_request(
+    context: typer.Context,
+    pull_request_id: Annotated[str | None, typer.Argument(help="Pull request ID.")] = None,
+    message: Annotated[
+        str | None, typer.Option("--message", help="Merge commit message; defaults to a generated one.")
+    ] = None,
+    merge_strategy: Annotated[
+        str, typer.Option("--merge-strategy", help="One of: merge_commit, squash, fast_forward.")
+    ] = "merge_commit",
+    close_source_branch: Annotated[
+        bool, typer.Option("--close-source-branch", help="Close the source branch after merge.")
+    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+    _execute(
+        context,
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .merge_pull_request(
+                _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
+                message=_optional_value_or_environment(message, "JUST_DEV_PR_MESSAGE"),
+                merge_strategy=_option_or_environment(merge_strategy, "JUST_DEV_PR_MERGE_STRATEGY", "merge_commit"),
+                close_source_branch=_flag_or_environment(close_source_branch, "JUST_DEV_PR_CLOSE_SOURCE_BRANCH"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
+        ),
+    )
 
 
 @jenkins_app.command("run-build")

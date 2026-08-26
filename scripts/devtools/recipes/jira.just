@@ -28,12 +28,42 @@ read-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_READ_FIELDS='' $JU
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
 [arg('JUST_DEV_JIRA_SUMMARY', long='summary')]
 [arg('JUST_DEV_JIRA_DESCRIPTION', long='description')]
+[arg('JUST_DEV_JIRA_LABELS', long='labels')]
+[arg('JUST_DEV_JIRA_PRIORITY', long='priority')]
 [arg('JUST_DEV_DRY_RUN', long='dry-run', value='1')]
 [arg('JUST_DEV_YES', long='yes', value='1')]
 [arg('JUST_DEV_FORMAT', long='format')]
 [arg('JUST_DEV_SAFE', long='safe', value='1')]
-update-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_UPDATE_REQUEST='' $JUST_DEV_JIRA_SUMMARY='' $JUST_DEV_JIRA_DESCRIPTION='' $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
+update-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_UPDATE_REQUEST='' $JUST_DEV_JIRA_SUMMARY='' $JUST_DEV_JIRA_DESCRIPTION='' $JUST_DEV_JIRA_LABELS='' $JUST_DEV_JIRA_PRIORITY='' $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev jira update-jira-issue
+
+[working-directory(devtools_root)]
+[env('JUST_DEV_PROJECT_ROOT', project_root)]
+[arg('JUST_DEV_JIRA_ASSIGNEE', long='assignee')]
+[arg('JUST_DEV_DRY_RUN', long='dry-run', value='1')]
+[arg('JUST_DEV_YES', long='yes', value='1')]
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
+assign-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_ASSIGNEE='' $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
+    @uv run --locked just-dev jira assign-jira-issue
+
+[working-directory(devtools_root)]
+[env('JUST_DEV_PROJECT_ROOT', project_root)]
+[arg('JUST_DEV_DRY_RUN', long='dry-run', value='1')]
+[arg('JUST_DEV_YES', long='yes', value='1')]
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
+comment-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_COMMENT $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
+    @uv run --locked just-dev jira comment-jira-issue
+
+[working-directory(devtools_root)]
+[env('JUST_DEV_PROJECT_ROOT', project_root)]
+[arg('JUST_DEV_DRY_RUN', long='dry-run', value='1')]
+[arg('JUST_DEV_YES', long='yes', value='1')]
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
+transition-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_STATUS $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
+    @uv run --locked just-dev jira transition-jira-issue
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]

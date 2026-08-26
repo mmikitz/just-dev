@@ -291,6 +291,8 @@ class DevtoolsService:
         *,
         summary: str | None = None,
         description: str | None = None,
+        labels: str | None = None,
+        priority: str | None = None,
         fields: Mapping[str, Any] | None = None,
         dry_run: bool = False,
         yes: bool = False,
@@ -299,11 +301,18 @@ class DevtoolsService:
         self._validate_atlassian()
         key = self._jira_issue_id_or_key(issue_id_or_key)
         extra = dict(fields or {})
-        if summary is None and description is None and not extra:
+        if summary is None and description is None and labels is None and priority is None and not extra:
             raise InputValidationError("Provide a summary, a description, or a JSON request body to update.")
         preview = PreviewResult(
             action="update Jira issue",
-            details={"issue_id_or_key": key, "summary": summary, "description": description, "request": extra},
+            details={
+                "issue_id_or_key": key,
+                "summary": summary,
+                "description": description,
+                "labels": labels,
+                "priority": priority,
+                "request": extra,
+            },
         )
         if dry_run:
             return preview
@@ -317,8 +326,107 @@ class DevtoolsService:
                 issue_id_or_key=key,
                 summary=summary,
                 description=description,
+                labels=labels,
+                priority=priority,
                 request=extra,
             ),
+        )
+
+    def assign_jira_issue(
+        self,
+        issue_id_or_key: str,
+        assignee: str,
+        *,
+        dry_run: bool = False,
+        yes: bool = False,
+        announce: Callable[[PreviewResult], None] | None = None,
+    ) -> dict[str, Any] | PreviewResult:
+        self._validate_atlassian()
+        key = self._jira_issue_id_or_key(issue_id_or_key)
+        if not assignee.strip():
+            raise InputValidationError("Assignee account ID must not be empty.")
+        preview = PreviewResult(action="assign Jira issue", details={"issue_id_or_key": key, "assignee": assignee})
+        if dry_run:
+            return preview
+        if announce:
+            announce(preview)
+        confirm_mutation("assign the Jira issue", yes=yes)
+        return self.broker.invoke(
+            "jira.assign_issue", self._payload(require_atlassian=True, issue_id_or_key=key, assignee=assignee)
+        )
+
+    def comment_jira_issue(
+        self,
+        issue_id_or_key: str,
+        comment: str,
+        *,
+        dry_run: bool = False,
+        yes: bool = False,
+        announce: Callable[[PreviewResult], None] | None = None,
+    ) -> dict[str, Any] | PreviewResult:
+        self._validate_atlassian()
+        key = self._jira_issue_id_or_key(issue_id_or_key)
+        if not comment.strip():
+            raise InputValidationError("Comment must not be empty.")
+        preview = PreviewResult(action="comment on Jira issue", details={"issue_id_or_key": key, "comment": comment})
+        if dry_run:
+            return preview
+        if announce:
+            announce(preview)
+        confirm_mutation("comment on the Jira issue", yes=yes)
+        return self.broker.invoke(
+            "jira.comment_issue", self._payload(require_atlassian=True, issue_id_or_key=key, comment=comment)
+        )
+
+    def transition_jira_issue(
+        self,
+        issue_id_or_key: str,
+        status: str,
+        *,
+        dry_run: bool = False,
+        yes: bool = False,
+        announce: Callable[[PreviewResult], None] | None = None,
+    ) -> dict[str, Any] | PreviewResult:
+        self._validate_atlassian()
+        key = self._jira_issue_id_or_key(issue_id_or_key)
+        if not status.strip():
+            raise InputValidationError("Target status must not be empty.")
+        preview = PreviewResult(action="transition Jira issue", details={"issue_id_or_key": key, "status": status})
+        if dry_run:
+            return preview
+        transitions_response = self.broker.invoke(
+            "jira.list_transitions", self._payload(require_atlassian=True, issue_id_or_key=key)
+        )
+        transitions = transitions_response.get("transitions") or []
+        matched = next(
+            (
+                candidate
+                for candidate in transitions
+                if str((candidate.get("to") or {}).get("name", "")).strip().lower() == status.strip().lower()
+            ),
+            None,
+        )
+        if matched is None:
+            available = ", ".join(
+                dict.fromkeys(
+                    str((candidate.get("to") or {}).get("name"))
+                    for candidate in transitions
+                    if (candidate.get("to") or {}).get("name")
+                )
+            )
+            raise InputValidationError(f"Unknown status '{status}'. Allowed transitions: {available or 'none'}.")
+        matched_name = str((matched.get("to") or {}).get("name"))
+        if announce:
+            announce(
+                PreviewResult(
+                    action="transition Jira issue",
+                    details={"issue_id_or_key": key, "status": matched_name, "transition_id": matched.get("id")},
+                )
+            )
+        confirm_mutation(f"transition the Jira issue to '{matched_name}'", yes=yes)
+        return self.broker.invoke(
+            "jira.transition_issue",
+            self._payload(require_atlassian=True, issue_id_or_key=key, transition_id=matched.get("id")),
         )
 
     def delete_jira_issue(
@@ -351,6 +459,9 @@ class DevtoolsService:
         yes: bool = False,
         no_verify: bool = False,
         source_branch: str | None = None,
+        description: str | None = None,
+        reviewer: Sequence[str] = (),
+        close_source_branch: bool = False,
         announce: Callable[[PreviewResult], None] | None = None,
     ) -> PullRequestResult | PreviewResult:
         if not title.strip():
@@ -363,6 +474,9 @@ class DevtoolsService:
                 "title": title,
                 "source_branch": branch,
                 "target_branch": self.config.bitbucket.target_branch,
+                "description": description,
+                "reviewers": list(reviewer),
+                "close_source_branch": close_source_branch,
                 "no_verify": no_verify,
             },
         )
@@ -375,7 +489,16 @@ class DevtoolsService:
         confirm_mutation(
             "create the pull request" if not no_verify else "skip verification and create the pull request", yes=yes
         )
-        result = self.broker.invoke("bitbucket.create_pull_request", self._payload(title=title, source_branch=branch))
+        result = self.broker.invoke(
+            "bitbucket.create_pull_request",
+            self._payload(
+                title=title,
+                source_branch=branch,
+                description=description,
+                reviewers=list(reviewer),
+                close_source_branch=close_source_branch,
+            ),
+        )
         return PullRequestResult.model_validate(result)
 
     def show_pull_request(self, pull_request_id: str | None = None) -> PullRequestResult | PreviewResult:
@@ -391,6 +514,142 @@ class DevtoolsService:
                 action="show Bitbucket pull request", details={"source_branch": branch, "found": False}
             )
         return PullRequestResult.model_validate(result)
+
+    @staticmethod
+    def _bitbucket_pull_request_id(value: str) -> str:
+        if not value.strip():
+            raise InputValidationError("Pull request ID must not be empty.")
+        return value.strip()
+
+    def approve_pull_request(
+        self,
+        pull_request_id: str,
+        *,
+        dry_run: bool = False,
+        yes: bool = False,
+        announce: Callable[[PreviewResult], None] | None = None,
+    ) -> dict[str, Any] | PreviewResult:
+        self._validate_bitbucket()
+        pr_id = self._bitbucket_pull_request_id(pull_request_id)
+        preview = PreviewResult(action="approve pull request", details={"pull_request_id": pr_id})
+        if dry_run:
+            return preview
+        if announce:
+            announce(preview)
+        confirm_mutation("approve the pull request", yes=yes)
+        return self.broker.invoke("bitbucket.approve_pull_request", self._payload(pull_request_id=pr_id))
+
+    def decline_pull_request(
+        self,
+        pull_request_id: str,
+        *,
+        dry_run: bool = False,
+        yes: bool = False,
+        announce: Callable[[PreviewResult], None] | None = None,
+    ) -> dict[str, Any] | PreviewResult:
+        self._validate_bitbucket()
+        pr_id = self._bitbucket_pull_request_id(pull_request_id)
+        preview = PreviewResult(action="decline pull request", details={"pull_request_id": pr_id})
+        if dry_run:
+            return preview
+        if announce:
+            announce(preview)
+        confirm_mutation("decline the pull request", yes=yes)
+        return self.broker.invoke("bitbucket.decline_pull_request", self._payload(pull_request_id=pr_id))
+
+    def comment_pull_request(
+        self,
+        pull_request_id: str,
+        comment: str,
+        *,
+        dry_run: bool = False,
+        yes: bool = False,
+        announce: Callable[[PreviewResult], None] | None = None,
+    ) -> dict[str, Any] | PreviewResult:
+        self._validate_bitbucket()
+        pr_id = self._bitbucket_pull_request_id(pull_request_id)
+        if not comment.strip():
+            raise InputValidationError("Comment must not be empty.")
+        preview = PreviewResult(
+            action="comment on pull request", details={"pull_request_id": pr_id, "comment": comment}
+        )
+        if dry_run:
+            return preview
+        if announce:
+            announce(preview)
+        confirm_mutation("comment on the pull request", yes=yes)
+        return self.broker.invoke(
+            "bitbucket.add_pull_request_comment", self._payload(pull_request_id=pr_id, comment=comment)
+        )
+
+    def add_pull_request_reviewer(
+        self,
+        pull_request_id: str,
+        reviewer: str,
+        *,
+        dry_run: bool = False,
+        yes: bool = False,
+        announce: Callable[[PreviewResult], None] | None = None,
+    ) -> dict[str, Any] | PreviewResult:
+        self._validate_bitbucket()
+        pr_id = self._bitbucket_pull_request_id(pull_request_id)
+        if not reviewer.strip():
+            raise InputValidationError("Reviewer must not be empty.")
+        preview = PreviewResult(
+            action="add pull request reviewer", details={"pull_request_id": pr_id, "reviewer": reviewer}
+        )
+        if dry_run:
+            return preview
+        if announce:
+            announce(preview)
+        confirm_mutation("add the reviewer to the pull request", yes=yes)
+        return self.broker.invoke(
+            "bitbucket.add_pull_request_reviewer", self._payload(pull_request_id=pr_id, reviewer=reviewer)
+        )
+
+    _BITBUCKET_MERGE_STRATEGIES = frozenset({"merge_commit", "squash", "fast_forward"})
+
+    def merge_pull_request(
+        self,
+        pull_request_id: str,
+        *,
+        message: str | None = None,
+        merge_strategy: str = "merge_commit",
+        close_source_branch: bool = False,
+        dry_run: bool = False,
+        yes: bool = False,
+        announce: Callable[[PreviewResult], None] | None = None,
+    ) -> dict[str, Any] | PreviewResult:
+        self._validate_bitbucket()
+        pr_id = self._bitbucket_pull_request_id(pull_request_id)
+        if merge_strategy not in self._BITBUCKET_MERGE_STRATEGIES:
+            raise InputValidationError(
+                "--merge-strategy must be one of: " + ", ".join(sorted(self._BITBUCKET_MERGE_STRATEGIES)) + "."
+            )
+        resolved_message = message.strip() if message and message.strip() else f"Merge pull request #{pr_id}"
+        preview = PreviewResult(
+            action="merge pull request",
+            details={
+                "pull_request_id": pr_id,
+                "message": resolved_message,
+                "merge_strategy": merge_strategy,
+                "close_source_branch": close_source_branch,
+            },
+        )
+        if dry_run:
+            return preview
+        if announce:
+            announce(preview)
+        confirm_mutation("merge the pull request", yes=yes)
+        return self.broker.invoke(
+            "bitbucket.merge_pull_request",
+            self._payload(
+                pull_request_id=pr_id,
+                message=resolved_message,
+                merge_strategy=merge_strategy,
+                close_source_branch=close_source_branch,
+            ),
+        )
 
     def run_build(
         self,

@@ -23,6 +23,19 @@ class FakeBroker:
             return {"issue_id_or_key": payload["issue_id_or_key"], "updated": True}
         if operation == "jira.delete_issue":
             return {"issue_id_or_key": payload["issue_id_or_key"], "deleted": True}
+        if operation == "jira.assign_issue":
+            return {"issue_id_or_key": payload["issue_id_or_key"], "assignee": payload["assignee"]}
+        if operation == "jira.comment_issue":
+            return {"id": "10050", "issue_id_or_key": payload["issue_id_or_key"]}
+        if operation == "jira.list_transitions":
+            return {
+                "transitions": [
+                    {"id": "11", "name": "Start Progress", "to": {"id": "3", "name": "In Progress"}},
+                    {"id": "31", "name": "Done", "to": {"id": "10001", "name": "Done"}},
+                ]
+            }
+        if operation == "jira.transition_issue":
+            return {"issue_id_or_key": payload["issue_id_or_key"], "transitioned": True}
         if operation == "bitbucket.create_pull_request":
             return {
                 "id": 7,
@@ -30,6 +43,16 @@ class FakeBroker:
                 "source_branch": payload["source_branch"],
                 "target_branch": "main",
             }
+        if operation == "bitbucket.approve_pull_request":
+            return {"pull_request_id": payload["pull_request_id"], "approved": True}
+        if operation == "bitbucket.decline_pull_request":
+            return {"pull_request_id": payload["pull_request_id"], "declined": True}
+        if operation == "bitbucket.add_pull_request_comment":
+            return {"id": 3, "pull_request_id": payload["pull_request_id"]}
+        if operation == "bitbucket.add_pull_request_reviewer":
+            return {"pull_request_id": payload["pull_request_id"], "reviewer": payload["reviewer"]}
+        if operation == "bitbucket.merge_pull_request":
+            return {"pull_request_id": payload["pull_request_id"], "merged": True, "message": payload["message"]}
         if operation == "jenkins.run_build":
             return {"preset": payload["preset"], "queue_id": 9, "status": "queued"}
         if operation == "confluence.get_page":
@@ -134,6 +157,280 @@ def test_update_jira_issue_requires_something_to_change(config, tmp_path) -> Non
 
     with pytest.raises(InputValidationError):
         service.update_jira_issue("DEV-1")
+
+
+def test_update_jira_issue_accepts_labels_alone(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    service.update_jira_issue("DEV-1", labels="a,b", yes=True)
+
+    assert broker.calls[0][1]["labels"] == "a,b"
+
+
+def test_update_jira_issue_accepts_priority_alone(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    service.update_jira_issue("DEV-1", priority="High", yes=True)
+
+    assert broker.calls[0][1]["priority"] == "High"
+
+
+def test_assign_jira_issue_announces_preview_before_confirming(config, tmp_path) -> None:
+    broker = FakeBroker()
+    announced: list[PreviewResult] = []
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.assign_jira_issue("DEV-1", "abc123", yes=True, announce=announced.append)
+
+    assert result["assignee"] == "abc123"
+    assert announced[0].details["issue_id_or_key"] == "DEV-1"
+    assert announced[0].details["assignee"] == "abc123"
+    assert broker.calls[0][0] == "jira.assign_issue"
+
+
+def test_assign_jira_issue_rejects_empty_assignee(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.assign_jira_issue("DEV-1", "   ")
+
+    assert broker.calls == []
+
+
+def test_assign_jira_issue_dry_run_never_calls_broker(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.assign_jira_issue("DEV-1", "abc123", dry_run=True)
+
+    assert isinstance(result, PreviewResult)
+    assert broker.calls == []
+
+
+def test_comment_jira_issue_forwards_comment_text(config, tmp_path) -> None:
+    broker = FakeBroker()
+    announced: list[PreviewResult] = []
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.comment_jira_issue("DEV-1", "Looks good", yes=True, announce=announced.append)
+
+    assert result["issue_id_or_key"] == "DEV-1"
+    assert announced[0].details["comment"] == "Looks good"
+    assert broker.calls[0] == ("jira.comment_issue", broker.calls[0][1])
+    assert broker.calls[0][1]["comment"] == "Looks good"
+
+
+def test_comment_jira_issue_rejects_empty_comment(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.comment_jira_issue("DEV-1", "  ")
+
+    assert broker.calls == []
+
+
+def test_transition_jira_issue_dry_run_never_calls_broker(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.transition_jira_issue("DEV-1", "Done", dry_run=True)
+
+    assert isinstance(result, PreviewResult)
+    assert result.details["status"] == "Done"
+    assert broker.calls == []
+
+
+def test_transition_jira_issue_resolves_status_to_transition_id_case_insensitively(config, tmp_path) -> None:
+    broker = FakeBroker()
+    announced: list[PreviewResult] = []
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.transition_jira_issue("DEV-1", "in progress", yes=True, announce=announced.append)
+
+    assert result["transitioned"] is True
+    assert [name for name, _ in broker.calls] == ["jira.list_transitions", "jira.transition_issue"]
+    assert broker.calls[1][1]["transition_id"] == "11"
+    assert announced[0].details["status"] == "In Progress"
+    assert announced[0].details["transition_id"] == "11"
+
+
+def test_transition_jira_issue_rejects_unknown_status_with_allowed_list(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(
+        InputValidationError, match=r"Unknown status 'Bogus'\. Allowed transitions: In Progress, Done\."
+    ):
+        service.transition_jira_issue("DEV-1", "Bogus")
+
+    assert [name for name, _ in broker.calls] == ["jira.list_transitions"]
+
+
+def test_transition_jira_issue_rejects_empty_status(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.transition_jira_issue("DEV-1", "   ")
+
+    assert broker.calls == []
+
+
+def test_approve_pull_request_dry_run_never_calls_broker(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.approve_pull_request("42", dry_run=True)
+
+    assert isinstance(result, PreviewResult)
+    assert broker.calls == []
+
+
+def test_approve_pull_request_announces_preview_before_confirming(config, tmp_path) -> None:
+    broker = FakeBroker()
+    announced: list[PreviewResult] = []
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.approve_pull_request("42", yes=True, announce=announced.append)
+
+    assert result["approved"] is True
+    assert announced[0].details["pull_request_id"] == "42"
+    assert broker.calls[0][0] == "bitbucket.approve_pull_request"
+
+
+def test_approve_pull_request_rejects_empty_id(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.approve_pull_request("  ")
+
+    assert broker.calls == []
+
+
+def test_decline_pull_request_invokes_broker(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.decline_pull_request("42", yes=True)
+
+    assert result["declined"] is True
+    assert broker.calls[0][0] == "bitbucket.decline_pull_request"
+
+
+def test_comment_pull_request_forwards_comment_text(config, tmp_path) -> None:
+    broker = FakeBroker()
+    announced: list[PreviewResult] = []
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.comment_pull_request("42", "lgtm", yes=True, announce=announced.append)
+
+    assert result["pull_request_id"] == "42"
+    assert announced[0].details["comment"] == "lgtm"
+    assert broker.calls[0][1]["comment"] == "lgtm"
+
+
+def test_comment_pull_request_rejects_empty_comment(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.comment_pull_request("42", "   ")
+
+    assert broker.calls == []
+
+
+def test_add_pull_request_reviewer_forwards_reviewer(config, tmp_path) -> None:
+    broker = FakeBroker()
+    announced: list[PreviewResult] = []
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.add_pull_request_reviewer("42", "alice", yes=True, announce=announced.append)
+
+    assert result["reviewer"] == "alice"
+    assert announced[0].details["reviewer"] == "alice"
+    assert broker.calls[0][0] == "bitbucket.add_pull_request_reviewer"
+
+
+def test_add_pull_request_reviewer_rejects_empty_reviewer(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.add_pull_request_reviewer("42", "  ")
+
+    assert broker.calls == []
+
+
+def test_merge_pull_request_synthesizes_default_message_when_omitted(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.merge_pull_request("42", yes=True)
+
+    assert result["message"] == "Merge pull request #42"
+    assert broker.calls[0][1]["message"] == "Merge pull request #42"
+    assert broker.calls[0][1]["merge_strategy"] == "merge_commit"
+    assert broker.calls[0][1]["close_source_branch"] is False
+
+
+def test_merge_pull_request_uses_supplied_message_when_given(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    service.merge_pull_request("42", message="Ship it", merge_strategy="squash", close_source_branch=True, yes=True)
+
+    assert broker.calls[0][1]["message"] == "Ship it"
+    assert broker.calls[0][1]["merge_strategy"] == "squash"
+    assert broker.calls[0][1]["close_source_branch"] is True
+
+
+def test_merge_pull_request_rejects_unknown_merge_strategy(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(
+        InputValidationError, match=r"--merge-strategy must be one of: fast_forward, merge_commit, squash\."
+    ):
+        service.merge_pull_request("42", merge_strategy="rebase")
+
+    assert broker.calls == []
+
+
+def test_merge_pull_request_dry_run_never_calls_broker(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.merge_pull_request("42", dry_run=True)
+
+    assert isinstance(result, PreviewResult)
+    assert broker.calls == []
+
+
+def test_create_pull_request_forwards_description_reviewer_and_close_source_branch(config, tmp_path) -> None:
+    broker = FakeBroker()
+    verification = FakeVerification()
+    service = DevtoolsService(config, tmp_path, broker, verification_runner=verification)
+
+    service.create_pull_request(
+        "A PR",
+        source_branch="feature/x",
+        description="Adds caching",
+        reviewer=["alice"],
+        close_source_branch=True,
+        yes=True,
+    )
+
+    payload = broker.calls[0][1]
+    assert payload["description"] == "Adds caching"
+    # Config's default reviewer ("reviewer", from the `config` fixture) is merged in at the
+    # adapter layer, not here — the workflow payload carries only the caller-supplied list.
+    assert payload["reviewers"] == ["alice"]
+    assert payload["close_source_branch"] is True
 
 
 def test_pull_request_verifies_before_broker_operation(config, tmp_path) -> None:
