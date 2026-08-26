@@ -299,7 +299,7 @@ def test_bitbucket_adapter_merges_declines_comments_and_assigns_reviewer() -> No
     ]
     assert client.decline_calls == [("w", "r", "42", None)]
     assert client.comment_calls == [("w", "r", "42", "Looks good")]
-    assert client.participant_calls == [("w", "r", "42", "REVIEWER", "alice")]
+    assert client.participant_calls == [("w", "r", 42, "REVIEWER", "alice")]
 
 
 def test_bitbucket_adapter_create_pull_request_unions_config_and_explicit_reviewers() -> None:
