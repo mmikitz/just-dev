@@ -6,16 +6,26 @@ from collections.abc import Mapping
 from typing import Any
 
 from .adapters import BitbucketAdapter, ConfluenceAdapter, JenkinsAdapter, JiraAdapter
+from .atlassian import site_url_from_configured_cloud_id
 from .config import require_preset
-from .errors import AuthenticationError, InputValidationError
+from .errors import AuthenticationError, ConfigurationError, InputValidationError
 from .models import JiraPreset, ProjectConfig
 from .redaction import redact_text
 
 
-def _token(tokens: Mapping[str, str], scope: str) -> str:
+def _token(tokens: Mapping[str, str], scope: str, *, ci: bool = False) -> str:
     token = tokens.get(scope)
     if not token:
-        raise AuthenticationError(f"The unlocked KeePass profile has no {scope} token entry.")
+        if ci:
+            raise AuthenticationError(
+                f"CI requires the {scope} token credential JUST_DEV_CI_{scope.upper()}_TOKEN. "
+                "Inject it from the CI credentials store."
+            )
+        raise AuthenticationError(
+            f"No {scope} token is available in the unlocked profile. Add it with "
+            f"`just configure-auth --entry {scope}=KEEPASS_ENTRY_UUID` and then run "
+            "`just unlock-secrets`."
+        )
     return token
 
 
@@ -78,42 +88,50 @@ def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mappin
     """Execute only a named, finite set of safe integration operations."""
 
     try:
+        ci = payload.get("__just_dev_ci") is True
         config = _config(payload)
+        if operation.startswith(("jira.", "confluence.")) and site_url_from_configured_cloud_id(
+            config.atlassian.cloud_id
+        ):
+            raise ConfigurationError(
+                "Credential broker received an unresolved Atlassian site URL. Run the operation through the CLI "
+                "so its Cloud ID can be resolved first."
+            )
         result: Any
         if operation == "jira.create_issue":
             jira_preset = require_preset(config.jira.presets, str(payload["preset"]), "Jira")
             result = JiraAdapter(config.atlassian.cloud_id).create_issue(
-                _token(tokens, "jira"), _jira_create_body(jira_preset, payload)
+                _token(tokens, "jira", ci=ci), _jira_create_body(jira_preset, payload)
             )
         elif operation == "jira.read_issue":
             result = JiraAdapter(config.atlassian.cloud_id).read_issue(
-                _token(tokens, "jira"),
+                _token(tokens, "jira", ci=ci),
                 str(payload["issue_id_or_key"]),
                 _request_object(payload, "parameters"),
             )
         elif operation == "jira.update_issue":
             result = JiraAdapter(config.atlassian.cloud_id).update_issue(
-                _token(tokens, "jira"),
+                _token(tokens, "jira", ci=ci),
                 str(payload["issue_id_or_key"]),
                 _jira_update_body(payload),
             )
         elif operation == "jira.delete_issue":
             result = JiraAdapter(config.atlassian.cloud_id).delete_issue(
-                _token(tokens, "jira"),
+                _token(tokens, "jira", ci=ci),
                 str(payload["issue_id_or_key"]),
                 _request_object(payload, "parameters"),
             )
         elif operation == "bitbucket.create_pull_request":
             result = BitbucketAdapter(config.bitbucket).create_pull_request(
-                _token(tokens, "bitbucket"), str(payload["title"]), str(payload["source_branch"])
+                _token(tokens, "bitbucket", ci=ci), str(payload["title"]), str(payload["source_branch"])
             )
         elif operation == "bitbucket.get_pull_request":
             result = BitbucketAdapter(config.bitbucket).get_pull_request(
-                _token(tokens, "bitbucket"), str(payload["pull_request_id"])
+                _token(tokens, "bitbucket", ci=ci), str(payload["pull_request_id"])
             )
         elif operation == "bitbucket.find_open_pull_request":
             found = BitbucketAdapter(config.bitbucket).find_open_pull_request(
-                _token(tokens, "bitbucket"), str(payload["source_branch"])
+                _token(tokens, "bitbucket", ci=ci), str(payload["source_branch"])
             )
             if found is None:
                 return {"found": False}
@@ -123,7 +141,7 @@ def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mappin
             jenkins_preset = require_preset(config.jenkins.presets, preset_name, "Jenkins")
             parameters = payload.get("parameters") or {}
             result = JenkinsAdapter(config.jenkins).run_build(
-                _token(tokens, "jenkins"),
+                _token(tokens, "jenkins", ci=ci),
                 preset_name,
                 jenkins_preset,
                 {str(k): str(v) for k, v in parameters.items()},
@@ -132,20 +150,20 @@ def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mappin
             preset_name = str(payload["preset"])
             jenkins_preset = require_preset(config.jenkins.presets, preset_name, "Jenkins")
             result = JenkinsAdapter(config.jenkins).get_build_status(
-                _token(tokens, "jenkins"), preset_name, jenkins_preset, str(payload["reference"])
+                _token(tokens, "jenkins", ci=ci), preset_name, jenkins_preset, str(payload["reference"])
             )
         elif operation == "confluence.get_page":
             result = ConfluenceAdapter(config.atlassian.cloud_id).get_page(
-                _token(tokens, "confluence"), str(payload["page_id"])
+                _token(tokens, "confluence", ci=ci), str(payload["page_id"])
             )
         elif operation == "confluence.update_page":
             preset_name = str(payload["preset"])
             confluence_preset = require_preset(config.confluence.presets, preset_name, "Confluence")
             current = ConfluenceAdapter(config.atlassian.cloud_id).get_page(
-                _token(tokens, "confluence"), confluence_preset.page_id
+                _token(tokens, "confluence", ci=ci), confluence_preset.page_id
             )
             result = ConfluenceAdapter(config.atlassian.cloud_id).update_page(
-                _token(tokens, "confluence"), current, confluence_preset, str(payload["storage"])
+                _token(tokens, "confluence", ci=ci), current, confluence_preset, str(payload["storage"])
             )
         else:
             raise InputValidationError(f"Broker operation '{operation}' is not allowed.")

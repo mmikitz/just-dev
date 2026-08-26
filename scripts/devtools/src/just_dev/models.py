@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .atlassian import validate_cloud_id_or_site_url
 
 
 class StrictModel(BaseModel):
@@ -14,6 +16,14 @@ class StrictModel(BaseModel):
 
 class AtlassianSettings(StrictModel):
     cloud_id: str
+
+    @field_validator("cloud_id")
+    @classmethod
+    def validate_cloud_id(cls, value: str) -> str:
+        try:
+            return validate_cloud_id_or_site_url(value)
+        except ValueError as exc:
+            raise ValueError("must be a UUID or canonical https://<site>.atlassian.net URL") from exc
 
 
 class JiraPreset(StrictModel):

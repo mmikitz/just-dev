@@ -1,43 +1,151 @@
 # just-dev
 
-`scripts/devtools/` is a self-contained starter kit for safe, repeatable Jira,
-Bitbucket, Jenkins and Confluence workflows. Copy the whole directory into a
-target project and add exactly this line to its root `justfile`:
+This is the complete Getting Started guide for the portable `scripts/devtools/`
+kit. It provides safe, repeatable Jira, Bitbucket, Jenkins, and Confluence
+workflows through `just`.
+
+## 1. Copy and import the kit
+
+Copy the entire `scripts/devtools/` directory into the target repository, then
+add this one line to the target repository's root `justfile`:
 
 ```just
 import 'scripts/devtools/justfile'
 ```
 
-## Requirements
+Requirements are Python 3.12+, [uv](https://docs.astral.sh/uv/), and
+`just >= 1.55`. Run `just check-devtools` after copying. Before using actions
+that create a pull request or run CI, replace the starter verification command
+in `scripts/devtools/recipes/project.just` with the target project's canonical
+lint, test, and build command.
 
-- Python 3.12 or newer
-- [uv](https://docs.astral.sh/uv/)
-- `just >= 1.55` (modules and submodule aliases are required)
+## 2. Configure `project.toml`
 
-The host project must tailor `config/project.toml` and replace the
-`project_verify_command` in `recipes/project.just` with its canonical lint,
-test, and build command. `just check-devtools` deliberately fails until the
-`JUST_DEV_REPLACE_ME` starter hook has been replaced.
+Copy `config/project.example.toml` to `config/project.toml` if needed, then
+replace every placeholder. The file is safe to commit: it must not contain a
+token, password, or KeePass master password.
 
-Secrets never belong in `project.toml`, a `.env` file, command arguments, or
-environment variables. Configure a local KeePass profile instead:
+For `[atlassian].cloud_id`, choose exactly one of these forms:
+
+```toml
+# An explicit Cloud ID is used unchanged.
+[atlassian]
+cloud_id = "00000000-0000-4000-8000-000000000123"
+```
+
+```toml
+# A canonical site URL is resolved once through tenant metadata and cached
+# locally in the selected auth profile.
+[atlassian]
+cloud_id = "https://example.atlassian.net"
+```
+
+Only a root `https://<site>.atlassian.net` URL is accepted. Do not supply an
+`api.atlassian.com` gateway URL, a `/wiki` or REST path, a proxy URL, or an
+HTTP URL. Jira and Confluence still use the scoped-token gateway internally.
+
+## 3. Create KeePass entries and configure local auth
+
+Create one KeePass entry per integration you intend to use. Put the scoped API
+token in the entry's **Password** field, then copy the entry UUID. Suggested
+entry titles are `just-dev/jira`, `just-dev/confluence`, `just-dev/bitbucket`,
+and `just-dev/jenkins`; titles are for humans only—the UUID is what the tool
+stores.
+
+Create an initial profile with only the scopes available today:
 
 ```text
-just configure-auth
+just configure-auth \
+  --database ~/Secrets/developer.kdbx \
+  --keyfile ~/Secrets/developer.key \
+  --entry jira=KEEPASS_ENTRY_UUID \
+  --entry bitbucket=KEEPASS_ENTRY_UUID
+```
+
+The user-local profile stores only the KeePass paths, entry UUIDs, and the
+non-secret site-URL-to-Cloud-ID cache. It is not stored in the repository.
+
+`configure-auth` is incremental: unchanged settings remain untouched. Add or
+replace one scope later without re-entering every value:
+
+```text
+just configure-auth --entry confluence=KEEPASS_ENTRY_UUID
+just configure-auth --database ~/Secrets/new-developer.kdbx
+just configure-auth --clear-keyfile
+just configure-auth --remove-entry jenkins
+just configure-auth --profile work --entry jira=KEEPASS_ENTRY_UUID
+```
+
+`--entry` and `--remove-entry` may be repeated. `configure-auth` refreshes the
+configured site's Cloud-ID cache. If tenant metadata is temporarily
+unreachable, it warns and keeps an existing valid mapping.
+
+## 4. Unlock, use, and recover credentials
+
+Start the local broker when you need integrations:
+
+```text
 just unlock-secrets
 just show-auth-status
 ```
 
-The profile (KeePass path, optional keyfile, and entry UUIDs only) is stored in
-the user configuration directory. Unlock starts a per-platform local broker;
-the broker receives tokens through an anonymous pipe and expires after at most
-eight hours. `just lock-secrets` stops it early.
+The master-password prompt is local. Missing, empty, or unreadable token
+entries generate safe warnings and do not stop the other available scopes from
+unlocking. For example, a Jira token can be unavailable while Bitbucket still
+works.
 
-## Commands
+If an operation needs a scope that was not unlocked, it tells you the exact
+repair path:
 
-The flat command is preferred; the equivalent namespaced form remains
-available, for example `just create-jira-issue bug "Summary"` and
-`just jira create-jira-issue bug "Summary"`.
+```text
+just configure-auth --entry jira=KEEPASS_ENTRY_UUID
+just unlock-secrets
+```
+
+If Jira or Confluence reports that the configured site has no Cloud ID, run
+`just configure-auth` while connected to the site, or replace the site URL in
+`project.toml` with the site's explicit UUID. Stop the broker when finished:
+
+```text
+just lock-secrets
+```
+
+`lock-secrets` waits for authenticated broker shutdown before discarding its
+session metadata.
+
+## Jira reads and output control
+
+Use the Jira issue reader as follows:
+
+```text
+just read-jira-issue ISSUE \
+  [--fields LIST] [--include links,attachments,comments] \
+  [--view summary|full] [--format text|markdown|json] [--safe]
+```
+
+Jira defaults to a concise Markdown summary. `--fields` reduces the remote
+payload, while `--include` opts into bulky nested sections. `--view full
+--format json` is the complete machine-oriented representation. `--expand` and
+`--properties` remain available for advanced Jira reads.
+
+Examples:
+
+```text
+just read-jira-issue FUTUREAERO-20
+just read-jira-issue FUTUREAERO-20 --fields summary,status,description --format text
+just read-jira-issue FUTUREAERO-20 --include comments,links --view summary --format markdown
+just read-jira-issue FUTUREAERO-20 --view full --format json --safe
+```
+
+All public result recipes accept `--format text|markdown|json` and `--safe`.
+Safe output structurally omits identity/account fields, URLs, and attachment
+metadata. It cannot reliably classify personal information embedded in free
+text such as an issue description or comment.
+
+## Everyday commands
+
+The flat form is preferred; the namespaced form is equivalent, for example
+`just jira read-jira-issue ABC-123`.
 
 ```text
 just check-devtools
@@ -46,7 +154,7 @@ just check-changed
 just install-hooks
 just configure-auth | unlock-secrets | show-auth-status | lock-secrets
 just create-jira-issue bug "Summary" --description "Details" --fields '{"customfield_10010":"Prod"}'
-just read-jira-isdue ABC-123 --fields summary,status --expand names
+just read-jira-issue ABC-123 --fields summary,status
 just update-jira-issue ABC-123 --summary "Updated summary" '{"notifyUsers":false}'
 just delete-jira-issue ABC-123 --delete-subtasks
 just create-pull-request "Title"
@@ -58,91 +166,33 @@ just publish-release-notes FILE
 just verify-project | run-ci
 ```
 
-Recipes forward safe, exported parameters, including mutation flags:
+Mutating commands support `--dry-run` and `--yes`. Without `--yes`, the tool
+shows a preview and requires interactive confirmation. Jira create presets
+control project, issue type, labels, and components; custom `--fields` cannot
+override those preset-managed fields.
+
+## CI and verification
+
+CI does not start or modify a local broker or auth profile. In a CI process
+(`CI=true`), inject only the needed credentials from the job's credential
+store:
 
 ```text
-just create-jira-issue bug "Summary" --dry-run
-just update-jira-issue ABC-123 '{"update":{"labels":[{"add":"triaged"}]}}' --yes
-just create-pull-request "Title" --yes
-just run-build test --parameter REF=main --dry-run
+JUST_DEV_CI_JIRA_TOKEN
+JUST_DEV_CI_CONFLUENCE_TOKEN
+JUST_DEV_CI_BITBUCKET_TOKEN
+JUST_DEV_CI_JENKINS_TOKEN
 ```
 
-The direct CLI exposes the same options for scripting or CI.
-
-### Jira request parameters
-
-The Jira module exposes exactly these four targets:
-
-```text
-create-jira-issue PRESET SUMMARY [--description TEXT] [--fields JSON]
-read-jira-isdue ISSUE_ID_OR_KEY [--fields LIST] [--expand LIST] [--properties LIST]
-update-jira-issue ISSUE_ID_OR_KEY [--summary TEXT] [--description TEXT] [REQUEST_JSON]
-delete-jira-issue ISSUE_ID_OR_KEY [--delete-subtasks]
-```
-
-`PRESET` names a `[jira.presets.<name>]` entry in `project.toml` (`project`,
-`issue_type`, `labels`, `components`) — the mechanism that resolves and
-enforces it lives in the portable tool code (`workflows.py` for an early
-check, `operations.py` in the privileged broker for the authoritative one);
-only the preset's *values* are project-specific, in `project.toml`. The broker
-always rebuilds `project`/`issuetype`/`labels`/`components` from the preset
-itself, so `--fields` cannot override them — attempting to set one of those
-keys is rejected before the broker is even called.
-
-- `create-jira-issue` sends the preset's fields plus `summary`, an optional
-  `--description` (wrapped as Atlassian Document Format), and an optional
-  `--fields` JSON object merged in for custom fields.
-- `read-jira-isdue` exposes the Get-issue query parameters `fields`, `expand`,
-  and `properties` as comma-separated flags.
-- `update-jira-issue` keeps a full JSON request body (`fields`, `update`,
-  `notifyUsers`, and the rest of the Edit-issue payload) as its escape hatch —
-  update supports array add/remove operations that don't map onto flags —
-  plus `--summary`/`--description` shortcuts merged into `fields`.
-- `delete-jira-issue` exposes `deleteSubtasks` as a boolean flag.
-
-Every mutating operation supports `--dry-run` and `--yes`. Without `--yes`, a
-TTY confirmation is required. `create-pull-request --no-verify` is guarded by
-the same explicit confirmation and never changes an existing open PR.
-
-## Configuration and permissions
-
-Named Jenkins presets are an allowlist. Arbitrary jobs, deploy jobs,
-administrative actions, merges, and bulk actions are intentionally absent. Jira
-is restricted at the broker to the four issue CRUD operations above, and
-`create-jira-issue` additionally only ever files into the project/issue type
-named by its preset. Jira and Confluence use separate scoped tokens through
-the Atlassian gateway; Bitbucket uses its own token. CI obtains credentials
-only through the Jenkins credentials store and does not use the local broker.
-In a CI process (`CI=true`), inject scoped credentials from that store as
-`JUST_DEV_CI_JIRA_TOKEN`, `JUST_DEV_CI_CONFLUENCE_TOKEN`,
-`JUST_DEV_CI_BITBUCKET_TOKEN`, and/or `JUST_DEV_CI_JENKINS_TOKEN`; these names
-are ignored outside CI.
-
-Run the test suite with:
+A missing CI scope names the required variable in its error. Run the main local
+checks from `scripts/devtools/` with:
 
 ```text
 uv run --locked pytest
 ```
 
-Run the local pull-request gate from the repository root with:
+From the repository root, run the full local gate with:
 
 ```text
 just qa
 ```
-
-It checks the lockfile, formatting, linting, type safety, tests, and the
-coverage floor. The corresponding GitHub Actions workflow also builds the
-package and audits dependencies.
-
-## Pre-commit hook
-
-`just install-hooks` installs a [Lefthook](https://lefthook.dev)-managed
-`pre-commit` hook (configured in the repository root's `lefthook.yml`) that
-runs `just check-changed` before every commit. Unlike `just qa`, it scopes
-Ruff, mypy, and pytest to the files actually staged for that commit — for
-example, staging only `src/just_dev/broker.py` lints just that file and runs
-only `tests/test_broker.py`. A staged change with no clear source-to-test
-mapping (or a change to `tests/conftest.py`) falls back to the full suite.
-
-The hook is a local convenience, not a substitute for `just qa` or CI: it
-does not run in the pipeline, and `git commit --no-verify` skips it.

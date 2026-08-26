@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 import just_dev.operations as operations
-from just_dev.errors import InputValidationError
+from just_dev.errors import AuthenticationError, InputValidationError
 from just_dev.operations import execute_operation
 
 
@@ -118,3 +118,14 @@ def test_legacy_jira_get_operation_is_not_allowlisted(config) -> None:
             "jira.get_issue",
             {"config": config.model_dump(mode="json"), "key": "DEV-1"},
         )
+
+
+def test_missing_local_and_ci_tokens_explain_the_respective_recovery_path(config) -> None:
+    payload = {"config": config.model_dump(mode="json"), "issue_id_or_key": "DEV-1", "parameters": {}}
+
+    with pytest.raises(AuthenticationError, match=r"configure-auth --entry jira=KEEPASS_ENTRY_UUID") as local:
+        execute_operation({}, "jira.read_issue", payload)
+    assert "unlock-secrets" in str(local.value)
+
+    with pytest.raises(AuthenticationError, match="JUST_DEV_CI_JIRA_TOKEN"):
+        execute_operation({}, "jira.read_issue", {**payload, "__just_dev_ci": True})

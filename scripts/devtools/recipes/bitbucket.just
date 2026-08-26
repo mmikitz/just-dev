@@ -5,10 +5,14 @@ import 'common.just'
 [arg('JUST_DEV_DRY_RUN', long='dry-run', value='1')]
 [arg('JUST_DEV_YES', long='yes', value='1')]
 [arg('JUST_DEV_NO_VERIFY', long='no-verify', value='1')]
-create-pull-request $JUST_DEV_PR_TITLE $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_NO_VERIFY='':
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
+create-pull-request $JUST_DEV_PR_TITLE $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_NO_VERIFY='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev bitbucket create-pull-request
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
-show-pull-request $JUST_DEV_PR_ID='':
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
+show-pull-request $JUST_DEV_PR_ID='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev bitbucket show-pull-request

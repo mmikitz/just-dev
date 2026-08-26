@@ -3,12 +3,21 @@ from __future__ import annotations
 import base64
 import os
 import signal
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from types import ModuleType
 
 import pytest
 
-from just_dev.broker import MAX_TTL_SECONDS, BrokerClient, BrokerManager, KeePassProfile, validate_profile
+from just_dev.broker import (
+    MAX_TTL_SECONDS,
+    BrokerClient,
+    BrokerManager,
+    KeePassProfile,
+    read_keepass_tokens,
+    validate_profile,
+)
 from just_dev.errors import AuthenticationError, BrokerError, ConfigurationError
 
 
@@ -91,3 +100,75 @@ def test_profile_rejects_non_uuid_entries(tmp_path) -> None:
     )
     with pytest.raises(ConfigurationError, match="UUID"):
         validate_profile(profile)
+
+
+def test_partial_profile_warns_for_missing_or_empty_entries_and_unlocks_available_tokens(tmp_path, monkeypatch) -> None:
+    database = tmp_path / "secrets.kdbx"
+    database.touch()
+    jira_uuid = "00000000-0000-4000-8000-000000000001"
+
+    class Entry:
+        password = "jira-secret"
+
+    class FakeKeePass:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def find_entries(self, uuid, first):
+            assert first is True
+            return Entry() if str(uuid) == jira_uuid else None
+
+    module = ModuleType("pykeepass")
+    module.PyKeePass = FakeKeePass
+    monkeypatch.setitem(sys.modules, "pykeepass", module)
+    profile = KeePassProfile(
+        database=str(database),
+        entries={"jira": jira_uuid, "confluence": ""},
+    )
+    warnings: list[str] = []
+
+    tokens = read_keepass_tokens(profile, "master-password", warning_sink=warnings.append)
+
+    assert tokens == {"jira": "jira-secret"}
+    assert any("confluence" in warning for warning in warnings)
+    assert any("bitbucket" in warning for warning in warnings)
+    manager = BrokerManager(runtime_directory=tmp_path / "runtime", state_directory=tmp_path / "state")
+    try:
+        status = manager.unlock(tokens, ttl_seconds=60)
+        assert status.active is True
+    finally:
+        manager.lock()
+
+
+def test_lock_keeps_state_until_an_authenticated_broker_has_exited(tmp_path) -> None:
+    manager = BrokerManager(runtime_directory=tmp_path / "runtime", state_directory=tmp_path / "state")
+    try:
+        status = manager.unlock({"jira": "jira-secret"}, ttl_seconds=60)
+        assert status.active is True
+        assert manager.state_path("default").is_file()
+
+        locked = manager.lock()
+
+        assert locked.active is False
+        assert not manager.state_path("default").exists()
+        assert manager.status().active is False
+    finally:
+        manager.lock()
+
+
+def test_lock_retains_metadata_when_a_live_broker_cannot_be_authenticated(tmp_path) -> None:
+    manager = BrokerManager(runtime_directory=tmp_path / "runtime", state_directory=tmp_path / "state")
+    try:
+        manager.unlock({"jira": "jira-secret"}, ttl_seconds=60)
+        state = manager._load_state("default")
+        assert state is not None
+        corrupted = state.model_copy(update={"auth_key": base64.urlsafe_b64encode(b"x" * 32).decode("ascii")})
+        manager._save_state("default", corrupted)
+
+        with pytest.raises(BrokerError, match="metadata was retained"):
+            manager.lock()
+
+        assert manager.state_path("default").exists()
+        manager._save_state("default", state)
+    finally:
+        manager.lock()

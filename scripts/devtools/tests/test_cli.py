@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from just_dev.broker import KeePassProfile, ProfileStore
 from just_dev.cli import Runtime, _CiOperationClient, _LazyBroker, app
 from just_dev.errors import ConflictError, DevtoolsError
 
@@ -14,7 +15,7 @@ def test_preview_release_notes_needs_no_broker(config, tmp_path, monkeypatch) ->
     config_path.write_text(
         """
 [atlassian]
-cloud_id = "cloud-123"
+cloud_id = "00000000-0000-4000-8000-000000000123"
 [jira]
 [bitbucket]
 workspace = "w"
@@ -109,7 +110,7 @@ def test_mutation_dry_run_needs_no_broker(tmp_path, monkeypatch) -> None:
     config_path.write_text(
         """
 [atlassian]
-cloud_id = "cloud-123"
+cloud_id = "00000000-0000-4000-8000-000000000123"
 [jira.presets.bug]
 project = "DEV"
 issue_type = "Task"
@@ -156,3 +157,105 @@ verify_commands = ["true"]
 
     assert from_recipe.exit_code == 0, from_recipe.output
     assert "From recipe" in from_recipe.output
+
+
+def test_jira_read_defaults_to_markdown_and_applies_view_and_safe_output(monkeypatch) -> None:
+    class FakeService:
+        def __init__(self) -> None:
+            self.arguments = None
+
+        def read_jira_issue(self, issue, **kwargs):
+            self.arguments = (issue, kwargs)
+            return {
+                "id": "10001",
+                "key": issue,
+                "self": "https://example.atlassian.net/issue/10001",
+                "fields": {
+                    "summary": "Readable issue",
+                    "status": {"name": "Open"},
+                    "assignee": {"displayName": "Ada", "accountId": "account-1"},
+                    "description": "Free text is retained.",
+                },
+            }
+
+    service = FakeService()
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: service)
+
+    markdown = CliRunner().invoke(
+        app,
+        ["jira", "read-jira-issue", "DEV-1", "--fields", "summary,status,assignee,description"],
+    )
+    safe_json = CliRunner().invoke(
+        app,
+        [
+            "jira",
+            "read-jira-issue",
+            "DEV-1",
+            "--fields",
+            "summary,status,assignee,description",
+            "--view",
+            "full",
+            "--format",
+            "json",
+            "--safe",
+        ],
+    )
+
+    assert markdown.exit_code == 0, markdown.output
+    assert markdown.output.startswith("# DEV-1: Readable issue")
+    assert service.arguments == (
+        "DEV-1",
+        {
+            "fields": "summary,status,assignee,description",
+            "include": (),
+            "view": "full",
+            "expand": None,
+            "properties": None,
+        },
+    )
+    assert safe_json.exit_code == 0, safe_json.output
+    assert "account-1" not in safe_json.output
+    assert "assignee" not in safe_json.output
+    assert "https://" not in safe_json.output
+
+
+def test_configure_auth_updates_an_existing_profile_incrementally(tmp_path, monkeypatch) -> None:
+    database = tmp_path / "credentials.kdbx"
+    keyfile = tmp_path / "credentials.key"
+    database.touch()
+    keyfile.touch()
+    store = ProfileStore(tmp_path / "profiles")
+    jira_uuid = "00000000-0000-4000-8000-000000000001"
+    jenkins_uuid = "00000000-0000-4000-8000-000000000002"
+    confluence_uuid = "00000000-0000-4000-8000-000000000003"
+    store.save(
+        "work",
+        KeePassProfile(
+            database=str(database),
+            keyfile=str(keyfile),
+            entries={"jira": jira_uuid, "jenkins": jenkins_uuid},
+        ),
+    )
+    monkeypatch.setattr("just_dev.cli.ProfileStore", lambda: store)
+    monkeypatch.setattr(Runtime, "resolve_local_cloud_id", lambda *args, **kwargs: None)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "auth",
+            "configure-auth",
+            "--profile",
+            "work",
+            "--entry",
+            f"confluence={confluence_uuid}",
+            "--remove-entry",
+            "jenkins",
+            "--clear-keyfile",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    updated = store.load("work")
+    assert updated.database == str(database)
+    assert updated.keyfile is None
+    assert updated.entries == {"jira": jira_uuid, "confluence": confluence_uuid}

@@ -1,6 +1,7 @@
 # This checked-in file deliberately contains no secrets. Adapt it for this project.
 
 [atlassian]
+# Either a Cloud-ID UUID or canonical site URL, e.g. https://example.atlassian.net.
 cloud_id = "REPLACE_WITH_ATLASSIAN_CLOUD_ID"
 
 [jira.presets.bug]
