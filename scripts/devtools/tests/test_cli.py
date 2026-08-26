@@ -159,6 +159,70 @@ verify_commands = ["true"]
     assert "From recipe" in from_recipe.output
 
 
+def test_transition_jira_issue_dry_run_needs_no_broker(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "project.toml"
+    config_path.write_text(
+        """
+[atlassian]
+cloud_id = "00000000-0000-4000-8000-000000000123"
+[jira]
+[bitbucket]
+workspace = "w"
+repository = "r"
+username = "u"
+[jenkins]
+url = "https://jenkins.example.test"
+username = "u"
+[confluence]
+[project]
+starter_hook = false
+verify_commands = ["true"]
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JUST_DEV_PROJECT_ROOT", str(tmp_path))
+
+    result = CliRunner().invoke(
+        app,
+        ["--config", str(config_path), "jira", "transition-jira-issue", "ABC-123", "Done", "--dry-run"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "transition Jira issue" in result.output
+
+
+def test_merge_pull_request_dry_run_needs_no_broker(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "project.toml"
+    config_path.write_text(
+        """
+[atlassian]
+cloud_id = "00000000-0000-4000-8000-000000000123"
+[jira]
+[bitbucket]
+workspace = "w"
+repository = "r"
+username = "u"
+[jenkins]
+url = "https://jenkins.example.test"
+username = "u"
+[confluence]
+[project]
+starter_hook = false
+verify_commands = ["true"]
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JUST_DEV_PROJECT_ROOT", str(tmp_path))
+
+    result = CliRunner().invoke(
+        app,
+        ["--config", str(config_path), "bitbucket", "merge-pull-request", "42", "--dry-run"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "merge pull request" in result.output
+
+
 def test_jira_read_defaults_to_markdown_and_applies_view_and_safe_output(monkeypatch) -> None:
     class FakeService:
         def __init__(self) -> None:

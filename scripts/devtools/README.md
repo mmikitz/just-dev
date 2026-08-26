@@ -156,9 +156,18 @@ just configure-auth | unlock-secrets | show-auth-status | lock-secrets
 just create-jira-issue bug "Summary" --description "Details" --fields '{"customfield_10010":"Prod"}'
 just read-jira-issue ABC-123 --fields summary,status
 just update-jira-issue ABC-123 --summary "Updated summary" '{"notifyUsers":false}'
+just update-jira-issue ABC-123 --labels "bug,urgent" --priority High
+just assign-jira-issue ABC-123 --assignee 5b10a2844c20165700ede21g
+just comment-jira-issue ABC-123 "Deployed to staging."
+just transition-jira-issue ABC-123 "Done"
 just delete-jira-issue ABC-123 --delete-subtasks
-just create-pull-request "Title"
+just create-pull-request "Title" --description "What changed and why" --reviewer alice --reviewer bob
 just show-pull-request [ID]
+just approve-pull-request 42
+just decline-pull-request 42
+just comment-pull-request 42 "Looks good, one nit inline."
+just add-pull-request-reviewer 42 alice
+just merge-pull-request 42 --merge-strategy squash --close-source-branch
 just run-build PRESET
 just show-build-status PRESET REF
 just preview-release-notes FILE

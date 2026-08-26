@@ -26,9 +26,17 @@ ALIASES = (
     "create-jira-issue",
     "read-jira-issue",
     "update-jira-issue",
+    "assign-jira-issue",
+    "comment-jira-issue",
+    "transition-jira-issue",
     "delete-jira-issue",
     "create-pull-request",
     "show-pull-request",
+    "approve-pull-request",
+    "decline-pull-request",
+    "comment-pull-request",
+    "add-pull-request-reviewer",
+    "merge-pull-request",
     "run-build",
     "show-build-status",
     "preview-release-notes",
@@ -70,6 +78,30 @@ RECIPES: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], tuple[str,
         ("jira", "update-jira-issue"),
     ),
     (
+        "assign-jira-issue",
+        "jira",
+        "assign-jira-issue",
+        ("ABC-123",),
+        ("JUST_DEV_JIRA_ISSUE_ID_OR_KEY",),
+        ("jira", "assign-jira-issue"),
+    ),
+    (
+        "comment-jira-issue",
+        "jira",
+        "comment-jira-issue",
+        ("ABC-123", "Looks good to me"),
+        ("JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "JUST_DEV_JIRA_COMMENT"),
+        ("jira", "comment-jira-issue"),
+    ),
+    (
+        "transition-jira-issue",
+        "jira",
+        "transition-jira-issue",
+        ("ABC-123", "Done"),
+        ("JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "JUST_DEV_JIRA_STATUS"),
+        ("jira", "transition-jira-issue"),
+    ),
+    (
         "delete-jira-issue",
         "jira",
         "delete-jira-issue",
@@ -86,6 +118,46 @@ RECIPES: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], tuple[str,
         ("bitbucket", "create-pull-request"),
     ),
     ("show-pull-request", "bitbucket", "show-pull-request", (), (), ("bitbucket", "show-pull-request")),
+    (
+        "approve-pull-request",
+        "bitbucket",
+        "approve-pull-request",
+        ("42",),
+        ("JUST_DEV_PR_ID",),
+        ("bitbucket", "approve-pull-request"),
+    ),
+    (
+        "decline-pull-request",
+        "bitbucket",
+        "decline-pull-request",
+        ("42",),
+        ("JUST_DEV_PR_ID",),
+        ("bitbucket", "decline-pull-request"),
+    ),
+    (
+        "comment-pull-request",
+        "bitbucket",
+        "comment-pull-request",
+        ("42", "Looks good to me"),
+        ("JUST_DEV_PR_ID", "JUST_DEV_PR_COMMENT"),
+        ("bitbucket", "comment-pull-request"),
+    ),
+    (
+        "add-pull-request-reviewer",
+        "bitbucket",
+        "add-pull-request-reviewer",
+        ("42", "octocat"),
+        ("JUST_DEV_PR_ID", "JUST_DEV_PR_REVIEWER_NAME"),
+        ("bitbucket", "add-pull-request-reviewer"),
+    ),
+    (
+        "merge-pull-request",
+        "bitbucket",
+        "merge-pull-request",
+        ("42",),
+        ("JUST_DEV_PR_ID",),
+        ("bitbucket", "merge-pull-request"),
+    ),
     (
         "run-build",
         "jenkins",
@@ -157,7 +229,7 @@ def test_each_public_alias_has_its_namespaced_target() -> None:
         assert f"alias {alias} :=" in content
 
 
-def test_jira_recipe_exposes_only_the_requested_crud_targets() -> None:
+def test_jira_recipe_exposes_only_the_requested_targets() -> None:
     content = (ROOT / "recipes" / "jira.just").read_text(encoding="utf-8")
     targets = re.findall(r"^([a-z][a-z-]+)(?:\s+\$|:)", content, flags=re.MULTILINE)
 
@@ -165,6 +237,9 @@ def test_jira_recipe_exposes_only_the_requested_crud_targets() -> None:
         "create-jira-issue",
         "read-jira-issue",
         "update-jira-issue",
+        "assign-jira-issue",
+        "comment-jira-issue",
+        "transition-jira-issue",
         "delete-jira-issue",
     ]
 
@@ -269,3 +344,47 @@ def test_jira_read_recipe_forwards_view_include_and_output_flags(just_invocation
     assert captured["env"]["JUST_DEV_JIRA_READ_VIEW"] == "full"
     assert captured["env"]["JUST_DEV_FORMAT"] == "json"
     assert captured["env"]["JUST_DEV_SAFE"] == "1"
+
+
+@requires_just
+def test_assign_jira_issue_recipe_forwards_assignee_flag(just_invocation) -> None:
+    captured = just_invocation("assign-jira-issue", "ABC-123", "--assignee", "abc123def456")
+
+    assert captured["env"]["JUST_DEV_JIRA_ASSIGNEE"] == "abc123def456"
+
+
+@requires_just
+def test_update_jira_issue_recipe_forwards_labels_and_priority_flags(just_invocation) -> None:
+    captured = just_invocation("update-jira-issue", "ABC-123", "--labels", "bug,urgent", "--priority", "High")
+
+    assert captured["env"]["JUST_DEV_JIRA_LABELS"] == "bug,urgent"
+    assert captured["env"]["JUST_DEV_JIRA_PRIORITY"] == "High"
+
+
+@requires_just
+def test_create_pull_request_recipe_forwards_description_reviewer_and_close_source_branch_flags(
+    just_invocation,
+) -> None:
+    captured = just_invocation(
+        "create-pull-request",
+        "Add: caching layer",
+        "--description",
+        "Adds an in-memory cache in front of the slow lookup.",
+        "--reviewer",
+        "octocat",
+        "--close-source-branch",
+    )
+
+    assert captured["env"]["JUST_DEV_PR_DESCRIPTION"] == "Adds an in-memory cache in front of the slow lookup."
+    assert captured["env"]["JUST_DEV_PR_REVIEWER"] == "octocat"
+    assert captured["env"]["JUST_DEV_PR_CLOSE_SOURCE_BRANCH"] == "1"
+
+
+@requires_just
+def test_merge_pull_request_recipe_forwards_message_and_merge_strategy_flags(just_invocation) -> None:
+    captured = just_invocation(
+        "merge-pull-request", "42", "--message", "Merging after review", "--merge-strategy", "squash"
+    )
+
+    assert captured["env"]["JUST_DEV_PR_MESSAGE"] == "Merging after review"
+    assert captured["env"]["JUST_DEV_PR_MERGE_STRATEGY"] == "squash"

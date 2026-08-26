@@ -43,7 +43,7 @@ def _request_object(payload: Mapping[str, Any], name: str) -> dict[str, Any]:
     return dict(value)
 
 
-def _jira_description_document(text: str) -> dict[str, Any]:
+def _jira_adf_document(text: str) -> dict[str, Any]:
     return {
         "type": "doc",
         "version": 1,
@@ -66,7 +66,7 @@ def _jira_create_body(preset: JiraPreset, payload: Mapping[str, Any]) -> dict[st
     fields["summary"] = str(payload["summary"])
     description = payload.get("description")
     if description:
-        fields["description"] = _jira_description_document(str(description))
+        fields["description"] = _jira_adf_document(str(description))
     return {"fields": fields}
 
 
@@ -78,7 +78,13 @@ def _jira_update_body(payload: Mapping[str, Any]) -> dict[str, Any]:
         fields["summary"] = str(summary)
     description = payload.get("description")
     if description:
-        fields["description"] = _jira_description_document(str(description))
+        fields["description"] = _jira_adf_document(str(description))
+    labels = payload.get("labels")
+    if labels:
+        fields["labels"] = [label.strip() for label in str(labels).split(",") if label.strip()]
+    priority = payload.get("priority")
+    if priority:
+        fields["priority"] = {"name": str(priority).strip()}
     if fields:
         body["fields"] = fields
     return body
@@ -121,9 +127,37 @@ def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mappin
                 str(payload["issue_id_or_key"]),
                 _request_object(payload, "parameters"),
             )
+        elif operation == "jira.assign_issue":
+            result = JiraAdapter(config.atlassian.cloud_id).assign_issue(
+                _token(tokens, "jira", ci=ci),
+                str(payload["issue_id_or_key"]),
+                str(payload["assignee"]),
+            )
+        elif operation == "jira.comment_issue":
+            result = JiraAdapter(config.atlassian.cloud_id).comment_issue(
+                _token(tokens, "jira", ci=ci),
+                str(payload["issue_id_or_key"]),
+                {"body": _jira_adf_document(str(payload["comment"]))},
+            )
+        elif operation == "jira.list_transitions":
+            result = JiraAdapter(config.atlassian.cloud_id).list_transitions(
+                _token(tokens, "jira", ci=ci),
+                str(payload["issue_id_or_key"]),
+            )
+        elif operation == "jira.transition_issue":
+            result = JiraAdapter(config.atlassian.cloud_id).transition_issue(
+                _token(tokens, "jira", ci=ci),
+                str(payload["issue_id_or_key"]),
+                str(payload["transition_id"]),
+            )
         elif operation == "bitbucket.create_pull_request":
             result = BitbucketAdapter(config.bitbucket).create_pull_request(
-                _token(tokens, "bitbucket", ci=ci), str(payload["title"]), str(payload["source_branch"])
+                _token(tokens, "bitbucket", ci=ci),
+                str(payload["title"]),
+                str(payload["source_branch"]),
+                description=(str(payload["description"]) if payload.get("description") else None),
+                reviewers=[str(reviewer) for reviewer in (payload.get("reviewers") or [])],
+                close_source_branch=bool(payload.get("close_source_branch")),
             )
         elif operation == "bitbucket.get_pull_request":
             result = BitbucketAdapter(config.bitbucket).get_pull_request(
@@ -136,6 +170,30 @@ def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mappin
             if found is None:
                 return {"found": False}
             return {"found": True, **found.model_dump(mode="json")}
+        elif operation == "bitbucket.approve_pull_request":
+            result = BitbucketAdapter(config.bitbucket).approve_pull_request(
+                _token(tokens, "bitbucket", ci=ci), str(payload["pull_request_id"])
+            )
+        elif operation == "bitbucket.merge_pull_request":
+            result = BitbucketAdapter(config.bitbucket).merge_pull_request(
+                _token(tokens, "bitbucket", ci=ci),
+                str(payload["pull_request_id"]),
+                message=str(payload["message"]),
+                merge_strategy=str(payload["merge_strategy"]),
+                close_source_branch=bool(payload.get("close_source_branch")),
+            )
+        elif operation == "bitbucket.decline_pull_request":
+            result = BitbucketAdapter(config.bitbucket).decline_pull_request(
+                _token(tokens, "bitbucket", ci=ci), str(payload["pull_request_id"])
+            )
+        elif operation == "bitbucket.add_pull_request_comment":
+            result = BitbucketAdapter(config.bitbucket).add_pull_request_comment(
+                _token(tokens, "bitbucket", ci=ci), str(payload["pull_request_id"]), str(payload["comment"])
+            )
+        elif operation == "bitbucket.add_pull_request_reviewer":
+            result = BitbucketAdapter(config.bitbucket).add_pull_request_reviewer(
+                _token(tokens, "bitbucket", ci=ci), str(payload["pull_request_id"]), str(payload["reviewer"])
+            )
         elif operation == "jenkins.run_build":
             preset_name = str(payload["preset"])
             jenkins_preset = require_preset(config.jenkins.presets, preset_name, "Jenkins")

@@ -49,6 +49,12 @@ class FakeBitbucket:
         self.pull_requests = pull_requests
         self.list_calls: list[tuple] = []
         self.create_calls: list[tuple] = []
+        self.resource_url_calls: list[tuple] = []
+        self.post_calls: list[tuple] = []
+        self.merge_calls: list[tuple] = []
+        self.decline_calls: list[tuple] = []
+        self.comment_calls: list[tuple] = []
+        self.participant_calls: list[tuple] = []
 
     def get_pull_requests(self, *args, **kwargs):
         self.list_calls.append((args, kwargs))
@@ -71,6 +77,30 @@ class FakeBitbucket:
             "source": {"branch": {"name": "feature/x"}},
             "destination": {"branch": {"name": "main"}},
         }
+
+    def resource_url(self, resource, api_root=None, api_version=None):
+        self.resource_url_calls.append((resource, api_root, api_version))
+        return f"2.0/{resource}"
+
+    def post(self, path, *, data=None, params=None):
+        self.post_calls.append((path, data, params))
+        return {"approved": True}
+
+    def merge_pull_request(self, *args, **kwargs):
+        self.merge_calls.append((args, kwargs))
+        return {"id": args[2], "state": "MERGED"}
+
+    def decline_pull_request(self, *args):
+        self.decline_calls.append(args)
+        return {"id": args[2], "state": "DECLINED"}
+
+    def add_pull_request_comment(self, *args):
+        self.comment_calls.append(args)
+        return {"id": 99, "content": {"raw": args[3]}}
+
+    def assign_pull_request_participant_role(self, *args):
+        self.participant_calls.append(args)
+        return {"role": args[3], "user": {"name": args[4]}}
 
 
 class FakeJenkins:
@@ -182,6 +212,130 @@ def test_jira_adapter_uses_atlassian_sdk_with_scoped_gateway(monkeypatch) -> Non
         )
     ]
     assert client.delete_calls == [("rest/api/3/issue/DEV-1", {"deleteSubtasks": True})]
+
+
+def test_jira_adapter_assigns_comments_lists_transitions_and_transitions_issue(monkeypatch) -> None:
+    client = FakeJira()
+    monkeypatch.setattr(adapters, "Jira", lambda *args, **kwargs: client)
+    adapter = JiraAdapter("cloud id")
+    comment_body = {
+        "type": "doc",
+        "version": 1,
+        "content": [{"type": "paragraph", "content": [{"type": "text", "text": "hello"}]}],
+    }
+
+    assigned = adapter.assign_issue("secret", "DEV-1", "abc123")
+    commented = adapter.comment_issue("secret", "DEV-1", {"body": comment_body})
+    transitions = adapter.list_transitions("secret", "DEV-1")
+    transitioned = adapter.transition_issue("secret", "DEV-1", "31")
+
+    assert assigned == {"issue_id_or_key": "DEV-1", "assignee": "abc123"}
+    assert commented == {"id": "10001", "key": "DEV-1", "self": "https://jira.test/DEV-1"}
+    assert transitions["fields"]["status"]["name"] == "In Progress"
+    assert transitioned == {"id": "10001", "key": "DEV-1", "self": "https://jira.test/DEV-1"}
+    assert client.put_calls == [("rest/api/3/issue/DEV-1/assignee", {"accountId": "abc123"}, None)]
+    assert client.post_calls == [
+        ("rest/api/3/issue/DEV-1/comment", {"body": comment_body}, None),
+        ("rest/api/3/issue/DEV-1/transitions", {"transition": {"id": "31"}}, None),
+    ]
+    assert client.get_calls == [("rest/api/3/issue/DEV-1/transitions", None)]
+
+
+def test_jira_adapter_assign_and_transition_fall_back_when_jira_returns_no_content() -> None:
+    class EmptyResponseJira:
+        def resource_url(self, resource, api_root=None, api_version=None):
+            return f"rest/api/3/{resource}"
+
+        def put(self, path, *, data=None, params=None):
+            return None
+
+        def post(self, path, *, data=None, params=None):
+            return None
+
+    adapter = JiraAdapter("cloud", lambda token: EmptyResponseJira())
+
+    assert adapter.assign_issue("secret", "DEV-1", "abc123") == {
+        "issue_id_or_key": "DEV-1",
+        "assignee": "abc123",
+    }
+    assert adapter.transition_issue("secret", "DEV-1", "31") == {
+        "issue_id_or_key": "DEV-1",
+        "transitioned": True,
+    }
+
+
+def test_bitbucket_adapter_approves_via_native_cloud_endpoint_without_a_user_slug() -> None:
+    client = FakeBitbucket([])
+    settings = BitbucketSettings(workspace="w", repository="r", username="u")
+
+    result = BitbucketAdapter(settings, lambda token: client).approve_pull_request("token", 42)
+
+    assert result == {"approved": True}
+    assert client.resource_url_calls == [("repositories/w/r/pullrequests/42/approve", None, None)]
+    assert client.post_calls == [("2.0/repositories/w/r/pullrequests/42/approve", {"approved": True}, None)]
+
+
+def test_bitbucket_adapter_merges_declines_comments_and_assigns_reviewer() -> None:
+    client = FakeBitbucket([])
+    settings = BitbucketSettings(workspace="w", repository="r", username="u")
+    adapter = BitbucketAdapter(settings, lambda token: client)
+
+    merged = adapter.merge_pull_request(
+        "token", 42, message="Merge it", merge_strategy="squash", close_source_branch=True
+    )
+    declined = adapter.decline_pull_request("token", 42)
+    commented = adapter.add_pull_request_comment("token", 42, "Looks good")
+    assigned = adapter.add_pull_request_reviewer("token", 42, "alice")
+
+    assert merged == {"id": "42", "state": "MERGED"}
+    assert declined == {"id": "42", "state": "DECLINED"}
+    assert commented == {"id": 99, "content": {"raw": "Looks good"}}
+    assert assigned == {"role": "REVIEWER", "user": {"name": "alice"}}
+    assert client.merge_calls == [
+        (
+            ("w", "r", "42", "Merge it"),
+            {"close_source_branch": True, "merge_strategy": "squash", "pr_version": None},
+        )
+    ]
+    assert client.decline_calls == [("w", "r", "42", None)]
+    assert client.comment_calls == [("w", "r", "42", "Looks good")]
+    assert client.participant_calls == [("w", "r", "42", "REVIEWER", "alice")]
+
+
+def test_bitbucket_adapter_create_pull_request_unions_config_and_explicit_reviewers() -> None:
+    client = FakeBitbucket([])
+    settings = BitbucketSettings(workspace="w", repository="r", username="u", reviewers=["bob"])
+
+    result = BitbucketAdapter(settings, lambda token: client).create_pull_request(
+        "token", "New", "feature/x", description="desc", reviewers=["alice", "bob"], close_source_branch=True
+    )
+
+    assert result.id == 6
+    payload = client.create_calls[0][2]
+    assert payload["description"] == "desc"
+    assert payload["reviewers"] == [{"username": "bob"}, {"username": "alice"}]
+    assert payload["close_source_branch"] is True
+
+
+def test_bitbucket_adapter_create_pull_request_skips_new_fields_when_an_open_pr_already_exists() -> None:
+    client = FakeBitbucket(
+        [
+            {
+                "id": 5,
+                "title": "Already open",
+                "source": {"branch": {"name": "feature/x"}},
+                "destination": {"branch": {"name": "main"}},
+            }
+        ]
+    )
+    settings = BitbucketSettings(workspace="w", repository="r", username="u", reviewers=["bob"])
+
+    result = BitbucketAdapter(settings, lambda token: client).create_pull_request(
+        "token", "New", "feature/x", description="desc", reviewers=["alice"], close_source_branch=True
+    )
+
+    assert result.existing is True
+    assert client.create_calls == []
 
 
 def test_bitbucket_adapter_uses_sdk_pagination_before_creating() -> None:

@@ -27,9 +27,17 @@ invoke the same recipe and remain supported.
 | `just create-jira-issue PRESET SUMMARY` | `just jira create-jira-issue PRESET SUMMARY` |
 | `just read-jira-issue KEY` | `just jira read-jira-issue KEY` |
 | `just update-jira-issue KEY [JSON]` | `just jira update-jira-issue KEY [JSON]` |
+| `just assign-jira-issue KEY --assignee ACCOUNT_ID` | `just jira assign-jira-issue KEY --assignee ACCOUNT_ID` |
+| `just comment-jira-issue KEY COMMENT` | `just jira comment-jira-issue KEY COMMENT` |
+| `just transition-jira-issue KEY STATUS` | `just jira transition-jira-issue KEY STATUS` |
 | `just delete-jira-issue KEY` | `just jira delete-jira-issue KEY` |
 | `just create-pull-request TITLE` | `just bitbucket create-pull-request TITLE` |
 | `just show-pull-request [ID]` | `just bitbucket show-pull-request [ID]` |
+| `just approve-pull-request PR_ID` | `just bitbucket approve-pull-request PR_ID` |
+| `just decline-pull-request PR_ID` | `just bitbucket decline-pull-request PR_ID` |
+| `just comment-pull-request PR_ID COMMENT` | `just bitbucket comment-pull-request PR_ID COMMENT` |
+| `just add-pull-request-reviewer PR_ID REVIEWER` | `just bitbucket add-pull-request-reviewer PR_ID REVIEWER` |
+| `just merge-pull-request PR_ID` | `just bitbucket merge-pull-request PR_ID` |
 | `just run-build PRESET` | `just jenkins run-build PRESET` |
 | `just show-build-status PRESET REF` | `just jenkins show-build-status PRESET REF` |
 | `just preview-release-notes FILE` | `just confluence preview-release-notes FILE` |
@@ -111,7 +119,11 @@ fields, URLs, and attachment metadata. It cannot perfectly classify PII in
 arbitrary free text such as descriptions or comments.
 
 Mutating commands retain `--dry-run` and `--yes`; without `--yes`, they show a
-preview and require a TTY confirmation. The broker remains narrowly scoped:
-Jira supports the four issue CRUD operations only, Jenkins accepts named
-allowlisted presets and parameters, Bitbucket does not merge, and Confluence
-writes only versioned preset pages.
+preview and require a TTY confirmation. The broker remains narrowly scoped to a
+hard allowlist in `execute_operation`, never an open passthrough: Jira
+supports create, read, update, and delete plus assign, comment, and
+transition; Bitbucket supports create and show plus approve, merge, decline,
+comment, and add-reviewer; Jenkins accepts named allowlisted presets and
+parameters; and Confluence writes only versioned preset pages. See
+`UX-DESIGN-PRINCIPLES.md` for the principle governing when a capability
+becomes a new command versus a new flag on an existing one.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from functools import wraps
 from typing import Any, Protocol, TypeVar
 from urllib.parse import quote
@@ -49,6 +49,12 @@ class JiraClient(Protocol):
 
 
 class BitbucketClient(Protocol):
+    def resource_url(self, resource: str, api_root: str | None = None, api_version: str | None = None) -> str: ...
+
+    def post(
+        self, path: str, *, data: Mapping[str, Any] | None = None, params: Mapping[str, Any] | None = None
+    ) -> Any: ...
+
     def get_pull_requests(
         self,
         project_key: str,
@@ -63,6 +69,34 @@ class BitbucketClient(Protocol):
     def create_pull_request(self, project_key: str, repository_slug: str, data: Mapping[str, Any]) -> Any: ...
 
     def get_pull_request(self, project_key: str, repository_slug: str, pull_request_id: str | int) -> Any: ...
+
+    def merge_pull_request(
+        self,
+        project_key: str,
+        repository_slug: str,
+        pr_id: str,
+        merge_message: str,
+        close_source_branch: bool = False,
+        merge_strategy: str = "merge_commit",
+        pr_version: int | None = None,
+    ) -> Any: ...
+
+    def decline_pull_request(
+        self, project_key: str, repository_slug: str, pr_id: str, pr_version: int | None
+    ) -> Any: ...
+
+    def add_pull_request_comment(
+        self,
+        project_key: str,
+        repository_slug: str,
+        pull_request_id: str,
+        text: str,
+        parent_id: str | None = None,
+    ) -> Any: ...
+
+    def assign_pull_request_participant_role(
+        self, project_key: str, repository_slug: str, pull_request_id: str, role: str, user: str
+    ) -> Any: ...
 
 
 class ConfluenceClient(Protocol):
@@ -225,6 +259,33 @@ class JiraAdapter:
         response = client.delete(self._issue_path(client, issue_id_or_key), params=dict(parameters) or None)
         return self._completed_response(response, {"issue_id_or_key": issue_id_or_key, "deleted": True})
 
+    @_sdk_errors("Jira")
+    def assign_issue(self, token: str, issue_id_or_key: str, account_id: str) -> dict[str, Any]:
+        client = self._client(token)
+        response = client.put(f"{self._issue_path(client, issue_id_or_key)}/assignee", data={"accountId": account_id})
+        return self._completed_response(response, {"issue_id_or_key": issue_id_or_key, "assignee": account_id})
+
+    @_sdk_errors("Jira")
+    def comment_issue(self, token: str, issue_id_or_key: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        client = self._client(token)
+        return dict(
+            _mapping(client.post(f"{self._issue_path(client, issue_id_or_key)}/comment", data=dict(request)), "Jira")
+        )
+
+    @_sdk_errors("Jira")
+    def list_transitions(self, token: str, issue_id_or_key: str) -> dict[str, Any]:
+        client = self._client(token)
+        return dict(_mapping(client.get(f"{self._issue_path(client, issue_id_or_key)}/transitions"), "Jira"))
+
+    @_sdk_errors("Jira")
+    def transition_issue(self, token: str, issue_id_or_key: str, transition_id: str) -> dict[str, Any]:
+        client = self._client(token)
+        response = client.post(
+            f"{self._issue_path(client, issue_id_or_key)}/transitions",
+            data={"transition": {"id": transition_id}},
+        )
+        return self._completed_response(response, {"issue_id_or_key": issue_id_or_key, "transitioned": True})
+
 
 class BitbucketAdapter:
     def __init__(
@@ -284,7 +345,16 @@ class BitbucketAdapter:
         return self._find_open_pull_request(self._client(token), source_branch)
 
     @_sdk_errors("Bitbucket")
-    def create_pull_request(self, token: str, title: str, source_branch: str) -> PullRequestResult:
+    def create_pull_request(
+        self,
+        token: str,
+        title: str,
+        source_branch: str,
+        *,
+        description: str | None = None,
+        reviewers: Sequence[str] = (),
+        close_source_branch: bool = False,
+    ) -> PullRequestResult:
         client = self._client(token)
         existing = self._find_open_pull_request(client, source_branch)
         if existing:
@@ -294,10 +364,15 @@ class BitbucketAdapter:
             "title": title,
             "source": {"branch": {"name": source_branch}},
             "destination": {"branch": {"name": self.settings.target_branch}},
-            "close_source_branch": False,
+            "close_source_branch": close_source_branch,
         }
-        if self.settings.reviewers:
-            payload["reviewers"] = [{"username": reviewer} for reviewer in self.settings.reviewers]
+        if description:
+            payload["description"] = description
+        # Config-supplied reviewers are the team's defaults; an ad-hoc --reviewer should add
+        # to that list, not silently replace it, so config always wins the ordering.
+        all_reviewers = list(dict.fromkeys([*self.settings.reviewers, *reviewers]))
+        if all_reviewers:
+            payload["reviewers"] = [{"username": reviewer} for reviewer in all_reviewers]
         data = _mapping(client.create_pull_request(workspace, repository, payload), "Bitbucket")
         return self._as_result(data)
 
@@ -309,6 +384,61 @@ class BitbucketAdapter:
             "Bitbucket",
         )
         return self._as_result(data)
+
+    @_sdk_errors("Bitbucket")
+    def approve_pull_request(self, token: str, pull_request_id: str | int) -> dict[str, Any]:
+        client = self._client(token)
+        workspace, repository = self._repository()
+        url = client.resource_url(
+            f"repositories/{workspace}/{repository}/pullrequests/{quote(str(pull_request_id), safe='')}/approve"
+        )
+        return dict(_mapping(client.post(url, data={"approved": True}), "Bitbucket"))
+
+    @_sdk_errors("Bitbucket")
+    def merge_pull_request(
+        self,
+        token: str,
+        pull_request_id: str | int,
+        *,
+        message: str,
+        merge_strategy: str,
+        close_source_branch: bool,
+    ) -> dict[str, Any]:
+        client = self._client(token)
+        workspace, repository = self._repository()
+        data = client.merge_pull_request(
+            workspace,
+            repository,
+            str(pull_request_id),
+            message,
+            close_source_branch=close_source_branch,
+            merge_strategy=merge_strategy,
+            pr_version=None,
+        )
+        return dict(_mapping(data, "Bitbucket"))
+
+    @_sdk_errors("Bitbucket")
+    def decline_pull_request(self, token: str, pull_request_id: str | int) -> dict[str, Any]:
+        client = self._client(token)
+        workspace, repository = self._repository()
+        data = client.decline_pull_request(workspace, repository, str(pull_request_id), None)
+        return dict(_mapping(data, "Bitbucket"))
+
+    @_sdk_errors("Bitbucket")
+    def add_pull_request_comment(self, token: str, pull_request_id: str | int, text: str) -> dict[str, Any]:
+        client = self._client(token)
+        workspace, repository = self._repository()
+        data = client.add_pull_request_comment(workspace, repository, str(pull_request_id), text)
+        return dict(_mapping(data, "Bitbucket"))
+
+    @_sdk_errors("Bitbucket")
+    def add_pull_request_reviewer(self, token: str, pull_request_id: str | int, reviewer: str) -> dict[str, Any]:
+        client = self._client(token)
+        workspace, repository = self._repository()
+        data = client.assign_pull_request_participant_role(
+            workspace, repository, str(pull_request_id), "REVIEWER", reviewer
+        )
+        return dict(_mapping(data, "Bitbucket"))
 
 
 class JenkinsAdapter:
