@@ -10,9 +10,11 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+from .atlassian import site_url_from_configured_cloud_id
 from .config import require_preset, require_real_value
 from .confirmation import confirm_mutation
 from .errors import ConfigurationError, InputValidationError, VerificationError
+from .jira import jira_fields_parameter, parse_includes, validate_view
 from .markdown import markdown_to_storage
 from .models import (
     BuildResult,
@@ -121,17 +123,44 @@ class DevtoolsService:
         broker: OperationClient,
         *,
         verification_runner: VerificationRunner | None = None,
+        cloud_id_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         self.config = config
         self.project_root = project_root
         self.broker = broker
         self.verification_runner = verification_runner or VerificationRunner(config, project_root)
+        self.cloud_id_resolver = cloud_id_resolver
+        self._resolved_atlassian_config: ProjectConfig | None = None
 
-    def _payload(self, **values: Any) -> dict[str, Any]:
-        return {"config": self.config.model_dump(mode="json"), **values}
+    def _payload(self, *, require_atlassian: bool = False, **values: Any) -> dict[str, Any]:
+        config = self._atlassian_config() if require_atlassian else self.config
+        return {"config": config.model_dump(mode="json"), **values}
+
+    def _atlassian_config(self) -> ProjectConfig:
+        if self._resolved_atlassian_config is not None:
+            return self._resolved_atlassian_config
+        configured = require_real_value(self.config.atlassian.cloud_id, "atlassian.cloud_id")
+        if site_url_from_configured_cloud_id(configured) is None:
+            cloud_id = configured
+        elif self.cloud_id_resolver is None:
+            raise ConfigurationError(
+                "An Atlassian site URL needs Cloud-ID resolution through the CLI. Run the command through just-dev "
+                "after configuring local authentication."
+            )
+        else:
+            resolved_cloud_id = self.cloud_id_resolver(configured)
+            if not resolved_cloud_id:
+                raise ConfigurationError(
+                    "No Cloud ID is available for the configured Atlassian site. Run `just configure-auth` while "
+                    "connected, or set [atlassian].cloud_id to an explicit UUID."
+                )
+            cloud_id = resolved_cloud_id
+        atlassian = self.config.atlassian.model_copy(update={"cloud_id": cloud_id})
+        self._resolved_atlassian_config = self.config.model_copy(update={"atlassian": atlassian})
+        return self._resolved_atlassian_config
 
     def _validate_atlassian(self) -> None:
-        require_real_value(self.config.atlassian.cloud_id, "atlassian.cloud_id")
+        self._atlassian_config()
 
     def _validate_bitbucket(self) -> None:
         for label, value in (
@@ -219,7 +248,13 @@ class DevtoolsService:
         confirm_mutation("create the Jira issue", yes=yes)
         return self.broker.invoke(
             "jira.create_issue",
-            self._payload(preset=preset_name, summary=summary, description=description, fields=extra_fields),
+            self._payload(
+                require_atlassian=True,
+                preset=preset_name,
+                summary=summary,
+                description=description,
+                fields=extra_fields,
+            ),
         )
 
     def read_jira_issue(
@@ -227,16 +262,27 @@ class DevtoolsService:
         issue_id_or_key: str,
         *,
         fields: str | None = None,
+        include: str | Sequence[str] | None = None,
+        view: str = "summary",
         expand: str | None = None,
         properties: str | None = None,
     ) -> dict[str, Any]:
         self._validate_atlassian()
+        selected_includes = parse_includes(include)
+        view = validate_view(view)
+        fields_parameter = jira_fields_parameter(fields, includes=selected_includes, view=view)
         parameters = {
-            key: value for key, value in (("fields", fields), ("expand", expand), ("properties", properties)) if value
+            key: value
+            for key, value in (("fields", fields_parameter), ("expand", expand), ("properties", properties))
+            if value
         }
         return self.broker.invoke(
             "jira.read_issue",
-            self._payload(issue_id_or_key=self._jira_issue_id_or_key(issue_id_or_key), parameters=parameters),
+            self._payload(
+                require_atlassian=True,
+                issue_id_or_key=self._jira_issue_id_or_key(issue_id_or_key),
+                parameters=parameters,
+            ),
         )
 
     def update_jira_issue(
@@ -266,7 +312,13 @@ class DevtoolsService:
         confirm_mutation("update the Jira issue", yes=yes)
         return self.broker.invoke(
             "jira.update_issue",
-            self._payload(issue_id_or_key=key, summary=summary, description=description, request=extra),
+            self._payload(
+                require_atlassian=True,
+                issue_id_or_key=key,
+                summary=summary,
+                description=description,
+                request=extra,
+            ),
         )
 
     def delete_jira_issue(
@@ -287,7 +339,9 @@ class DevtoolsService:
         if announce:
             announce(preview)
         confirm_mutation("delete the Jira issue", yes=yes)
-        return self.broker.invoke("jira.delete_issue", self._payload(issue_id_or_key=key, parameters=parameters))
+        return self.broker.invoke(
+            "jira.delete_issue", self._payload(require_atlassian=True, issue_id_or_key=key, parameters=parameters)
+        )
 
     def create_pull_request(
         self,
@@ -411,7 +465,7 @@ class DevtoolsService:
             )
         # Read once for a human-facing preview. The broker reads again immediately before its versioned write.
         current = PageResult.model_validate(
-            self.broker.invoke("confluence.get_page", self._payload(page_id=preview.page_id))
+            self.broker.invoke("confluence.get_page", self._payload(require_atlassian=True, page_id=preview.page_id))
         )
         if announce:
             announce(
@@ -426,7 +480,7 @@ class DevtoolsService:
         confirm_mutation("publish the Confluence release notes", yes=yes)
         result = self.broker.invoke(
             "confluence.update_page",
-            self._payload(preset=preset_name, storage=preview.body or ""),
+            self._payload(require_atlassian=True, preset=preset_name, storage=preview.body or ""),
         )
         return PageResult.model_validate(result)
 

@@ -6,5 +6,7 @@ project_root := source_directory() / "../../.."
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
-check-devtools:
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
+check-devtools $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev check-devtools

@@ -12,12 +12,15 @@ from typing import Annotated, Any
 import typer
 from pydantic import BaseModel
 
-from .broker import BrokerManager, KeePassProfile, ProfileStore, validate_profile
+from .atlassian import resolve_site_cloud_id
+from .broker import REQUIRED_SCOPES, BrokerManager, CloudIdCache, KeePassProfile, ProfileStore, validate_profile
 from .config import load_project_config, project_root_from_environment
 from .errors import AuthenticationError, DevtoolsError, InputValidationError
+from .jira import parse_includes, prepare_issue_view, render_issue_markdown, validate_view
 from .models import PreviewResult
 from .operations import execute_operation
 from .redaction import redact_data, redact_text
+from .rendering import filter_safe_output, known_safe_output_formats, render_markdown, render_text
 from .workflows import DevtoolsService
 
 app = typer.Typer(help="Portable, least-privilege developer workflows.", no_args_is_help=True)
@@ -38,18 +41,46 @@ app.add_typer(project_app, name="project")
 @dataclass
 class Runtime:
     config_path: Path | None
-    output_format: str
+    output_format: str | None
     project_root: Path
+    safe: bool = False
+
+    def config(self):
+        return load_project_config(self.config_path, project_root=self.project_root)
+
+    def resolve_local_cloud_id(
+        self,
+        profile: str,
+        *,
+        refresh: bool = False,
+        required: bool = True,
+    ) -> str | None:
+        config = self.config()
+        return CloudIdCache().resolve(
+            config.atlassian.cloud_id,
+            profile=profile,
+            refresh=refresh,
+            required=required,
+        )
 
     def service(self, profile: str = "default", *, require_broker: bool = True) -> DevtoolsService:
-        config = load_project_config(self.config_path, project_root=self.project_root)
+        config = self.config()
+        cloud_id_resolver: Callable[[str], str | None] | None
         if not require_broker:
             broker: Any = _NoBroker()
+            cloud_id_resolver = None
         elif os.environ.get("CI", "").strip().lower() in {"1", "true", "yes", "on"}:
             broker = _CiOperationClient()
+            cloud_id_resolver = resolve_site_cloud_id
         else:
             broker = _LazyBroker(profile)
-        return DevtoolsService(config, self.project_root, broker)
+
+            def resolve_local_cloud_id(configured: str) -> str | None:
+                del configured
+                return self.resolve_local_cloud_id(profile, required=True)
+
+            cloud_id_resolver = resolve_local_cloud_id
+        return DevtoolsService(config, self.project_root, broker, cloud_id_resolver=cloud_id_resolver)
 
 
 class _NoBroker:
@@ -77,7 +108,7 @@ class _CiOperationClient:
             for scope in ("jira", "confluence", "bitbucket", "jenkins")
         }
         try:
-            return execute_operation(tokens, operation, payload)
+            return execute_operation(tokens, operation, {**payload, "__just_dev_ci": True})
         except DevtoolsError as error:
             error.message = redact_text(error.message, list(tokens.values()))
             raise
@@ -91,11 +122,21 @@ class _CiOperationClient:
 def callback(
     context: typer.Context,
     config: Annotated[Path | None, typer.Option("--config", help="Path to a secret-free project TOML file.")] = None,
-    output_format: Annotated[str, typer.Option("--format", help="Output format: text or json.")] = "text",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Omit structural identity, URL, and attachment fields.")] = False,
 ) -> None:
-    if output_format not in {"text", "json"}:
-        raise typer.BadParameter("must be 'text' or 'json'", param_hint="--format")
-    context.obj = Runtime(config_path=config, output_format=output_format, project_root=project_root_from_environment())
+    selected_format = output_format or os.environ.get("JUST_DEV_FORMAT") or None
+    if selected_format is not None and selected_format not in known_safe_output_formats():
+        raise typer.BadParameter("must be 'text', 'markdown', or 'json'", param_hint="--format")
+    safe = safe or _flag_or_environment(False, "JUST_DEV_SAFE")
+    context.obj = Runtime(
+        config_path=config,
+        output_format=selected_format,
+        project_root=project_root_from_environment(),
+        safe=safe,
+    )
 
 
 def _runtime(context: typer.Context) -> Runtime:
@@ -103,6 +144,17 @@ def _runtime(context: typer.Context) -> Runtime:
     if not isinstance(value, Runtime):
         raise RuntimeError("CLI runtime was not initialized.")
     return value
+
+
+def _set_command_output_options(context: typer.Context, output_format: str | None, safe: bool) -> None:
+    """Allow passthrough recipes to place output flags after their subcommand."""
+
+    runtime = _runtime(context)
+    if output_format is not None:
+        if output_format not in known_safe_output_formats():
+            raise InputValidationError("--format must be 'text', 'markdown', or 'json'.")
+        runtime.output_format = output_format
+    runtime.safe = runtime.safe or safe
 
 
 def _serialize(value: Any) -> Any:
@@ -117,27 +169,35 @@ def _serialize(value: Any) -> Any:
     return value
 
 
-def _human(value: Any) -> str:
-    data = _serialize(value)
-    if isinstance(data, list):
-        return "\n\n".join(_human(item) for item in data)
-    if isinstance(data, dict):
-        return "\n".join(f"{key}: {item}" for key, item in data.items())
-    return str(data)
-
-
-def _emit(context: typer.Context, value: Any) -> None:
+def _emit(
+    context: typer.Context,
+    value: Any,
+    *,
+    default_format: str = "text",
+    markdown_renderer: Callable[[Any], str] | None = None,
+) -> None:
     runtime = _runtime(context)
-    safe = redact_data(_serialize(value))
-    if runtime.output_format == "json":
-        typer.echo(json.dumps(safe, ensure_ascii=False, sort_keys=True))
+    data = redact_data(_serialize(value))
+    if runtime.safe:
+        data = filter_safe_output(data)
+    output_format = runtime.output_format or default_format
+    if output_format == "json":
+        typer.echo(json.dumps(data, ensure_ascii=False, sort_keys=True))
+    elif output_format == "markdown":
+        typer.echo(markdown_renderer(data) if markdown_renderer else render_markdown(data))
     else:
-        typer.echo(_human(safe))
+        typer.echo(render_text(data))
 
 
-def _execute(context: typer.Context, action: Callable[[], Any]) -> None:
+def _execute(
+    context: typer.Context,
+    action: Callable[[], Any],
+    *,
+    default_format: str = "text",
+    markdown_renderer: Callable[[Any], str] | None = None,
+) -> None:
     try:
-        _emit(context, action())
+        _emit(context, action(), default_format=default_format, markdown_renderer=markdown_renderer)
     except DevtoolsError as error:
         typer.echo(f"error: {redact_text(error)}", err=True)
         raise typer.Exit(code=error.exit_code) from error
@@ -200,16 +260,36 @@ def _parse_entries(entries: list[str]) -> dict[str, str]:
     parsed: dict[str, str] = {}
     for entry in entries:
         scope, separator, uuid = entry.partition("=")
-        if not separator or not scope or not uuid or scope in parsed:
+        scope = scope.strip().lower()
+        if not separator or not scope or not uuid.strip() or scope in parsed:
             raise InputValidationError("Each --entry must be unique and use SCOPE=KEEPASS_ENTRY_UUID.")
-        parsed[scope] = uuid
+        if scope not in REQUIRED_SCOPES:
+            raise InputValidationError("--entry scope must be one of: " + ", ".join(sorted(REQUIRED_SCOPES)) + ".")
+        parsed[scope] = uuid.strip()
     return parsed
 
 
+def _parse_removed_entries(entries: list[str]) -> set[str]:
+    removed = {entry.strip().lower() for entry in entries}
+    if not all(removed) or len(removed) != len(entries):
+        raise InputValidationError("Each --remove-entry scope must be non-empty and unique.")
+    unknown = removed - REQUIRED_SCOPES
+    if unknown:
+        raise InputValidationError("--remove-entry scope must be one of: " + ", ".join(sorted(REQUIRED_SCOPES)) + ".")
+    return removed
+
+
 @app.command("check-devtools")
-def check_devtools(context: typer.Context) -> None:
+def check_devtools(
+    context: typer.Context,
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
     """Validate prerequisites and ensure the project-specific hook was customized."""
 
+    _set_command_output_options(context, output_format, safe)
     _execute(context, lambda: _runtime(context).service(require_broker=False).check_devtools())
 
 
@@ -218,29 +298,65 @@ def configure_auth(
     context: typer.Context,
     database: Annotated[Path | None, typer.Option("--database", help="Path to the KeePass .kdbx database.")] = None,
     keyfile: Annotated[Path | None, typer.Option("--keyfile", help="Optional KeePass keyfile.")] = None,
+    clear_keyfile: Annotated[
+        bool, typer.Option("--clear-keyfile", help="Remove the configured KeePass keyfile.")
+    ] = False,
     entry: Annotated[
         list[str] | None, typer.Option("--entry", help="Repeat: jira|confluence|bitbucket|jenkins=entry UUID.")
     ] = None,
+    remove_entry: Annotated[
+        list[str] | None, typer.Option("--remove-entry", help="Repeat: remove a configured scope entry.")
+    ] = None,
     profile: Annotated[str, typer.Option("--profile", help="Local profile name.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
-    """Store a local profile containing paths and entry UUIDs, never tokens."""
+    """Incrementally store local paths, entry UUIDs, and non-secret Cloud-ID cache data."""
+
+    _set_command_output_options(context, output_format, safe)
 
     def action() -> PreviewResult:
-        chosen_database = database or Path(typer.prompt("KeePass database path"))
+        if keyfile is not None and clear_keyfile:
+            raise InputValidationError("Use either --keyfile or --clear-keyfile, not both.")
+        store = ProfileStore()
+        existing = store.load(profile) if store.path_for(profile).is_file() else None
+        chosen_database = database or (
+            Path(existing.database) if existing else Path(typer.prompt("KeePass database path"))
+        )
+        if clear_keyfile:
+            chosen_keyfile: str | None = None
+        elif keyfile is not None:
+            chosen_keyfile = str(keyfile.expanduser())
+        else:
+            chosen_keyfile = existing.keyfile if existing else None
+        entries = dict(existing.entries) if existing else {}
         parsed_entries = _parse_entries(entry or [])
-        if not parsed_entries:
-            parsed_entries = {
-                scope: typer.prompt(f"KeePass entry UUID for {scope}")
-                for scope in ("jira", "confluence", "bitbucket", "jenkins")
-            }
+        removed_entries = _parse_removed_entries(remove_entry or [])
+        if set(parsed_entries) & removed_entries:
+            raise InputValidationError("A scope cannot be supplied to both --entry and --remove-entry.")
+        entries.update(parsed_entries)
+        for scope in removed_entries:
+            entries.pop(scope, None)
         value = KeePassProfile(
             database=str(chosen_database.expanduser()),
-            keyfile=str(keyfile.expanduser()) if keyfile else None,
-            entries=parsed_entries,
+            keyfile=chosen_keyfile,
+            entries=entries,
+            cloud_ids=existing.cloud_ids if existing else {},
         )
         validate_profile(value)
-        path = ProfileStore().save(profile, value)
-        return PreviewResult(action="configure auth profile", details={"profile": profile, "path": str(path)})
+        path = store.save(profile, value)
+        try:
+            # configure-auth is the explicit refresh point. A cached good value is
+            # retained when tenant metadata is temporarily unavailable.
+            _runtime(context).resolve_local_cloud_id(profile, refresh=True, required=False)
+        except DevtoolsError as exc:
+            typer.echo(f"warning: Cloud-ID cache was not refreshed: {redact_text(exc)}", err=True)
+        return PreviewResult(
+            action="configure auth profile",
+            details={"profile": profile, "path": str(path), "configured_scopes": sorted(entries)},
+        )
 
     _execute(context, action)
 
@@ -250,12 +366,26 @@ def unlock_secrets(
     context: typer.Context,
     profile: Annotated[str, typer.Option("--profile", help="Local profile name.")] = "default",
     ttl_hours: Annotated[float, typer.Option("--ttl-hours", help="Session lifetime, at most 8 hours.")] = 8,
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
     """Prompt for the KeePass master password and start the local broker."""
+
+    _set_command_output_options(context, output_format, safe)
 
     def action() -> Any:
         if not 0 < ttl_hours <= 8:
             raise InputValidationError("--ttl-hours must be greater than 0 and no more than 8.")
+        # A missing mapping must not prevent a partial broker from unlocking
+        # Bitbucket or Jenkins. The Jira/Confluence call itself gives the
+        # actionable failure if its mapping remains unavailable.
+        ProfileStore().load(profile)
+        try:
+            _runtime(context).resolve_local_cloud_id(profile, required=False)
+        except DevtoolsError as exc:
+            typer.echo(f"warning: Cloud-ID cache was not checked: {redact_text(exc)}", err=True)
         return BrokerManager().unlock_from_keepass(profile, ttl_seconds=int(ttl_hours * 3600))
 
     _execute(context, action)
@@ -265,7 +395,12 @@ def unlock_secrets(
 def show_auth_status(
     context: typer.Context,
     profile: Annotated[str, typer.Option("--profile", help="Local profile name.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(context, lambda: BrokerManager().status(profile))
 
 
@@ -273,7 +408,12 @@ def show_auth_status(
 def lock_secrets(
     context: typer.Context,
     profile: Annotated[str, typer.Option("--profile", help="Local profile name.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(context, lambda: BrokerManager().lock(profile))
 
 
@@ -294,7 +434,12 @@ def create_jira_issue(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(
         context,
         lambda: (
@@ -313,13 +458,17 @@ def create_jira_issue(
     )
 
 
-@jira_app.command("read-jira-isdue")
-def read_jira_isdue(
+@jira_app.command("read-jira-issue")
+def read_jira_issue(
     context: typer.Context,
     issue_id_or_key: Annotated[str | None, typer.Argument(help="Issue ID or key, e.g. ABC-123.")] = None,
     fields: Annotated[
         str | None, typer.Option("--fields", help="Comma-separated field list, e.g. 'summary,status'.")
     ] = None,
+    include: Annotated[
+        str | None, typer.Option("--include", help="Comma-separated optional sections: links, attachments, comments.")
+    ] = None,
+    view: Annotated[str, typer.Option("--view", help="Issue view: summary or full.")] = "summary",
     expand: Annotated[
         str | None, typer.Option("--expand", help="Comma-separated entities to expand, e.g. 'changelog'.")
     ] = None,
@@ -327,19 +476,43 @@ def read_jira_isdue(
         str | None, typer.Option("--properties", help="Comma-separated entity property keys to return.")
     ] = None,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
-    _execute(
-        context,
-        lambda: (
+    _set_command_output_options(context, output_format, safe)
+
+    def action() -> dict[str, Any]:
+        resolved_fields = _optional_value_or_environment(fields, "JUST_DEV_JIRA_READ_FIELDS")
+        resolved_include = _optional_value_or_environment(include, "JUST_DEV_JIRA_READ_INCLUDE")
+        resolved_view = _option_or_environment(view, "JUST_DEV_JIRA_READ_VIEW", "summary")
+        selected_includes = parse_includes(resolved_include)
+        resolved_view = validate_view(resolved_view)
+        result = (
             _runtime(context)
             .service(profile)
             .read_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
-                fields=_optional_value_or_environment(fields, "JUST_DEV_JIRA_READ_FIELDS"),
+                fields=resolved_fields,
+                include=selected_includes,
+                view=resolved_view,
                 expand=_optional_value_or_environment(expand, "JUST_DEV_JIRA_READ_EXPAND"),
                 properties=_optional_value_or_environment(properties, "JUST_DEV_JIRA_READ_PROPERTIES"),
             )
-        ),
+        )
+        return prepare_issue_view(
+            result,
+            fields=resolved_fields,
+            includes=selected_includes,
+            view=resolved_view,
+        )
+
+    _execute(
+        context,
+        action,
+        default_format="markdown",
+        markdown_renderer=render_issue_markdown,
     )
 
 
@@ -361,7 +534,12 @@ def update_jira_issue(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(
         context,
         lambda: (
@@ -390,7 +568,12 @@ def delete_jira_issue(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(
         context,
         lambda: (
@@ -417,7 +600,12 @@ def create_pull_request(
         bool, typer.Option("--no-verify", help="Skip project verification after explicit confirmation.")
     ] = False,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(
         context,
         lambda: (
@@ -439,7 +627,12 @@ def show_pull_request(
     context: typer.Context,
     pull_request_id: Annotated[str | None, typer.Argument(help="Optional pull request ID.")] = None,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     value = pull_request_id if pull_request_id is not None else os.environ.get("JUST_DEV_PR_ID") or None
     _execute(context, lambda: _runtime(context).service(profile).show_pull_request(value))
 
@@ -454,7 +647,12 @@ def run_build(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(
         context,
         lambda: (
@@ -478,7 +676,12 @@ def show_build_status(
     preset: Annotated[str | None, typer.Argument(help="Named Jenkins preset.")] = None,
     reference: Annotated[str | None, typer.Argument(help="Queue/build reference.")] = None,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(
         context,
         lambda: (
@@ -498,7 +701,12 @@ def preview_release_notes(
     file: Annotated[Path | None, typer.Argument(help="Markdown file.")] = None,
     preset: Annotated[str, typer.Option("--preset", help="Named Confluence page preset.")] = "release-notes",
     profile: Annotated[str, typer.Option("--profile", help="Unused for preview; retained for symmetry.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
     del profile
     _execute(
         context,
@@ -523,7 +731,13 @@ def publish_release_notes(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    _set_command_output_options(context, output_format, safe)
+
     def action() -> Any:
         path = _argument_or_environment(
             str(file) if file else None, "JUST_DEV_RELEASE_NOTES_FILE", "Release-notes file"
@@ -544,12 +758,26 @@ def publish_release_notes(
 
 
 @project_app.command("verify-project")
-def verify_project(context: typer.Context) -> None:
+def verify_project(
+    context: typer.Context,
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(context, lambda: _runtime(context).service(require_broker=False).verify_project())
 
 
 @project_app.command("run-ci")
-def run_ci(context: typer.Context) -> None:
+def run_ci(
+    context: typer.Context,
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
     _execute(context, lambda: _runtime(context).service(require_broker=False).run_ci())
 
 

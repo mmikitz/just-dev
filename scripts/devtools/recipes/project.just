@@ -7,11 +7,15 @@ project_verify_command := 'printf "%s\\n" "JUST_DEV_REPLACE_ME: customize projec
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
 [env('JUST_DEV_PROJECT_VERIFY_COMMAND', project_verify_command)]
-verify-project:
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
+verify-project $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev project verify-project
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
 [env('JUST_DEV_PROJECT_VERIFY_COMMAND', project_verify_command)]
-run-ci:
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
+run-ci $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev project run-ci

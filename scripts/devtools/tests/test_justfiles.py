@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).parents[1]
 REPO_ROOT = ROOT.parents[1]
 
-# Every public alias and the module::recipe it must behave identically to (PLAN.md's command table).
+# Every public alias and the module::recipe it must behave identically to (ARCHITECTURE.md's command table).
 ALIASES = (
     "check-devtools",
     "qa",
@@ -24,7 +24,7 @@ ALIASES = (
     "show-auth-status",
     "lock-secrets",
     "create-jira-issue",
-    "read-jira-isdue",
+    "read-jira-issue",
     "update-jira-issue",
     "delete-jira-issue",
     "create-pull-request",
@@ -54,12 +54,12 @@ RECIPES: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], tuple[str,
         ("jira", "create-jira-issue"),
     ),
     (
-        "read-jira-isdue",
+        "read-jira-issue",
         "jira",
-        "read-jira-isdue",
+        "read-jira-issue",
         ("ABC-123",),
         ("JUST_DEV_JIRA_ISSUE_ID_OR_KEY",),
-        ("jira", "read-jira-isdue"),
+        ("jira", "read-jira-issue"),
     ),
     (
         "update-jira-issue",
@@ -163,7 +163,7 @@ def test_jira_recipe_exposes_only_the_requested_crud_targets() -> None:
 
     assert targets == [
         "create-jira-issue",
-        "read-jira-isdue",
+        "read-jira-issue",
         "update-jira-issue",
         "delete-jira-issue",
     ]
@@ -223,3 +223,49 @@ def test_special_characters_and_spaces_survive_without_shell_interpolation(just_
     captured = just_invocation("create-jira-issue", "bug", summary)
 
     assert captured["env"]["JUST_DEV_JIRA_SUMMARY"] == summary
+
+
+@requires_just
+def test_configure_auth_recipe_forwards_incremental_and_repeated_options(just_invocation) -> None:
+    database = "/tmp/credentials with spaces.kdbx"
+    jira_entry = "00000000-0000-4000-8000-000000000001"
+    confluence_entry = "00000000-0000-4000-8000-000000000002"
+    arguments = (
+        "--database",
+        database,
+        "--entry",
+        f"jira={jira_entry}",
+        "--entry",
+        f"confluence={confluence_entry}",
+        "--remove-entry",
+        "jenkins",
+        "--profile",
+        "work",
+    )
+
+    captured = just_invocation("configure-auth", *arguments)
+
+    assert captured["argv"] == ["run", "--locked", "just-dev", "auth", "configure-auth", *arguments]
+
+
+@requires_just
+def test_jira_read_recipe_forwards_view_include_and_output_flags(just_invocation) -> None:
+    captured = just_invocation(
+        "read-jira-issue",
+        "ABC-123",
+        "--fields",
+        "summary,status",
+        "--include",
+        "comments,links",
+        "--view",
+        "full",
+        "--format",
+        "json",
+        "--safe",
+    )
+
+    assert captured["env"]["JUST_DEV_JIRA_READ_FIELDS"] == "summary,status"
+    assert captured["env"]["JUST_DEV_JIRA_READ_INCLUDE"] == "comments,links"
+    assert captured["env"]["JUST_DEV_JIRA_READ_VIEW"] == "full"
+    assert captured["env"]["JUST_DEV_FORMAT"] == "json"
+    assert captured["env"]["JUST_DEV_SAFE"] == "1"

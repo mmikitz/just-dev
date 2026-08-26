@@ -24,8 +24,9 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from platformdirs import user_cache_dir, user_config_dir, user_runtime_dir
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator, model_validator
 
+from .atlassian import is_cloud_id, normalize_site_url, resolve_site_cloud_id, site_url_from_configured_cloud_id
 from .errors import (
     AuthenticationError,
     BrokerError,
@@ -45,10 +46,40 @@ MAX_TTL_SECONDS = 8 * 60 * 60
 
 
 class KeePassProfile(StrictModel):
-    version: int = 1
+    version: int = 2
     database: str
     keyfile: str | None = None
     entries: dict[str, str] = Field(default_factory=dict)
+    cloud_ids: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_version_one_profile(cls, value: Any) -> Any:
+        """Make pre-cache profiles loadable and rewrite them as version two on save."""
+
+        if not isinstance(value, Mapping):
+            return value
+        migrated = dict(value)
+        migrated.setdefault("cloud_ids", {})
+        if migrated.get("version") == 1:
+            migrated["version"] = 2
+        return migrated
+
+    @field_validator("cloud_ids")
+    @classmethod
+    def validate_cloud_ids(cls, value: dict[str, str]) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for site_url, cloud_id in value.items():
+            try:
+                site = normalize_site_url(site_url)
+            except ValueError as exc:
+                raise ValueError("Cloud-ID cache keys must be canonical Atlassian site URLs.") from exc
+            if not is_cloud_id(cloud_id):
+                raise ValueError("Cloud-ID cache values must be UUIDs.")
+            if site in normalized and normalized[site] != cloud_id:
+                raise ValueError(f"Cloud-ID cache contains conflicting values for {site}.")
+            normalized[site] = str(UUID(cloud_id))
+        return normalized
 
 
 class BrokerState(StrictModel):
@@ -125,36 +156,131 @@ class ProfileStore:
         path = self.path_for(profile)
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            return KeePassProfile.model_validate(raw)
+            value = KeePassProfile.model_validate(raw)
+            # Reading an older profile is also its safe migration point: the
+            # rewritten JSON gains cloud_ids, normalized cache keys, version 2,
+            # and owner-only permissions without ever containing a raw token.
+            if raw != value.model_dump(mode="json"):
+                _atomic_json_write(path, value.model_dump(mode="json"))
+            return value
         except FileNotFoundError as exc:
             raise ConfigurationError(f"No local auth profile named '{profile}'. Run configure-auth first.") from exc
         except (OSError, json.JSONDecodeError, ValidationError) as exc:
             raise ConfigurationError(f"Cannot read local auth profile '{profile}': {exc}") from exc
 
 
-def validate_profile(profile: KeePassProfile) -> None:
-    database = Path(profile.database).expanduser()
-    if not database.is_file():
-        raise ConfigurationError(f"KeePass database was not found: {database}")
-    if profile.keyfile and not Path(profile.keyfile).expanduser().is_file():
-        raise ConfigurationError(f"KeePass keyfile was not found: {Path(profile.keyfile).expanduser()}")
-    missing = REQUIRED_SCOPES - set(profile.entries)
-    unknown = set(profile.entries) - REQUIRED_SCOPES
-    if missing or unknown or any(not value.strip() for value in profile.entries.values()):
-        details: list[str] = []
-        if missing:
-            details.append("missing entries: " + ", ".join(sorted(missing)))
-        if unknown:
-            details.append("unknown entries: " + ", ".join(sorted(unknown)))
-        raise ConfigurationError("KeePass profile entry UUIDs are invalid (" + "; ".join(details) + ").")
-    for scope, entry_uuid in profile.entries.items():
+def _stderr_warning(message: str) -> None:
+    print(f"warning: {message}", file=sys.stderr)
+
+
+class CloudIdCache:
+    """Resolve and persist non-secret site-to-Cloud-ID mappings for local profiles."""
+
+    def __init__(
+        self,
+        profile_store: ProfileStore | None = None,
+        *,
+        resolver: Callable[[str], str] | None = None,
+    ) -> None:
+        self.profile_store = profile_store or ProfileStore()
+        self.resolver = resolver or resolve_site_cloud_id
+
+    def resolve(
+        self,
+        configured_cloud_id: str,
+        *,
+        profile: str = "default",
+        refresh: bool = False,
+        required: bool = True,
+        warning_sink: Callable[[str], None] = _stderr_warning,
+    ) -> str | None:
+        """Resolve configuration to a Cloud ID, using and updating the local cache.
+
+        A forced refresh keeps a working cached value if tenant metadata is
+        temporarily unavailable. Non-required callers (configure/unlock) turn a
+        first lookup failure into a useful warning; a Jira/Confluence operation
+        requests a value and therefore fails with a recovery path instead.
+        """
+
+        site_url = site_url_from_configured_cloud_id(configured_cloud_id)
+        if site_url is None:
+            return configured_cloud_id
+        local_profile = self.profile_store.load(profile)
+        cached = local_profile.cloud_ids.get(site_url)
+        if cached and not refresh:
+            return cached
         try:
-            UUID(entry_uuid)
+            cloud_id = self.resolver(site_url)
+            if not is_cloud_id(cloud_id):
+                raise ConfigurationError(f"Resolved Cloud ID for {site_url} is invalid.")
+            cloud_id = str(UUID(cloud_id))
+        except DevtoolsError as exc:
+            if cached:
+                warning_sink(
+                    f"Could not refresh the cached Cloud ID for {site_url}; keeping the existing mapping. {exc}"
+                )
+                return cached
+            if required:
+                raise ConfigurationError(
+                    f"No Cloud ID is cached for {site_url}. Run `just configure-auth` while connected, "
+                    "or replace [atlassian].cloud_id with its explicit UUID."
+                ) from exc
+            warning_sink(
+                f"Could not resolve the Cloud ID for {site_url}; Jira and Confluence will remain unavailable "
+                f"until it succeeds. {exc}"
+            )
+            return None
+        except Exception as exc:  # Defensive boundary for injected resolvers and future HTTP implementations.
+            if cached:
+                warning_sink(f"Could not refresh the cached Cloud ID for {site_url}; keeping the existing mapping.")
+                return cached
+            if required:
+                raise ConfigurationError(
+                    f"No Cloud ID is cached for {site_url}. Run `just configure-auth` while connected, "
+                    "or replace [atlassian].cloud_id with its explicit UUID."
+                ) from exc
+            warning_sink(
+                f"Could not resolve the Cloud ID for {site_url}; Jira and Confluence will remain unavailable "
+                "until it succeeds."
+            )
+            return None
+
+        updated_cloud_ids = {**local_profile.cloud_ids, site_url: cloud_id}
+        updated_profile = KeePassProfile.model_validate(
+            {**local_profile.model_dump(mode="json"), "version": 2, "cloud_ids": updated_cloud_ids}
+        )
+        self.profile_store.save(profile, updated_profile)
+        return cloud_id
+
+
+def validate_profile(profile: KeePassProfile, *, verify_paths: bool = True) -> None:
+    """Validate profile structure while permitting any subset of supported scopes."""
+
+    if not profile.database.strip():
+        raise ConfigurationError("A KeePass database path is required.")
+    database = Path(profile.database).expanduser()
+    if verify_paths and not database.is_file():
+        raise ConfigurationError(f"KeePass database was not found: {database}")
+    if verify_paths and profile.keyfile and not Path(profile.keyfile).expanduser().is_file():
+        raise ConfigurationError(f"KeePass keyfile was not found: {Path(profile.keyfile).expanduser()}")
+    unknown = set(profile.entries) - REQUIRED_SCOPES
+    if unknown:
+        raise ConfigurationError("KeePass profile has unknown entry scope(s): " + ", ".join(sorted(unknown)) + ".")
+    for scope, entry_uuid in profile.entries.items():
+        if not entry_uuid.strip():
+            continue
+        try:
+            UUID(entry_uuid.strip())
         except ValueError as exc:
             raise ConfigurationError(f"KeePass entry UUID for {scope} is invalid.") from exc
 
 
-def read_keepass_tokens(profile: KeePassProfile, password: str) -> dict[str, str]:
+def read_keepass_tokens(
+    profile: KeePassProfile,
+    password: str,
+    *,
+    warning_sink: Callable[[str], None] = _stderr_warning,
+) -> dict[str, str]:
     """Read only the named UUID entries and retain their values in process memory."""
 
     validate_profile(profile)
@@ -173,13 +299,19 @@ def read_keepass_tokens(profile: KeePassProfile, password: str) -> dict[str, str
         raise AuthenticationError("Unable to unlock the KeePass database.") from exc
 
     tokens: dict[str, str] = {}
-    for scope, entry_uuid in profile.entries.items():
+    for scope in sorted(REQUIRED_SCOPES):
+        entry_uuid = profile.entries.get(scope, "").strip()
+        if not entry_uuid:
+            warning_sink(f"No KeePass entry is configured for {scope}; that integration remains locked.")
+            continue
         try:
             entry = database.find_entries(uuid=UUID(entry_uuid), first=True)
-        except Exception as exc:
-            raise ConfigurationError(f"KeePass entry UUID for {scope} is invalid.") from exc
+        except Exception:
+            warning_sink(f"KeePass entry for {scope} could not be read; that integration remains locked.")
+            continue
         if entry is None or not entry.password:
-            raise AuthenticationError(f"KeePass entry for {scope} is missing or has no password value.")
+            warning_sink(f"KeePass entry for {scope} is missing or empty; that integration remains locked.")
+            continue
         tokens[scope] = entry.password
     return tokens
 
@@ -423,6 +555,20 @@ class BrokerManager:
         if state:
             _remove_socket(state.endpoint, state.family)
 
+    @staticmethod
+    def _process_is_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # It may be a broker from a differently privileged context; retain
+            # metadata rather than forgetting a process that could hold tokens.
+            return True
+        except OSError:
+            return False
+        return True
+
     def _endpoint(self, profile: str) -> tuple[str, str]:
         suffix = f"{_safe_profile_name(profile)}-{uuid4().hex}"
         if os.name == "nt":
@@ -465,9 +611,16 @@ class BrokerManager:
         current = self.status(profile)
         if current.active:
             return current
-        missing = REQUIRED_SCOPES - set(tokens)
-        if missing or any(not tokens.get(scope, "") for scope in REQUIRED_SCOPES):
-            raise AuthenticationError("KeePass profile does not supply all required scoped tokens.")
+        available_tokens = {
+            scope: token
+            for scope, token in tokens.items()
+            if scope in REQUIRED_SCOPES and isinstance(token, str) and token
+        }
+        if not available_tokens:
+            raise AuthenticationError(
+                "No usable scoped tokens were unlocked. Add a KeePass entry with `just configure-auth --entry "
+                "SCOPE=KEEPASS_ENTRY_UUID` and run `just unlock-secrets` again."
+            )
         endpoint, family = self._endpoint(profile)
         auth_key = secrets.token_bytes(32)
         encoded_key = base64.urlsafe_b64encode(auth_key).decode("ascii")
@@ -508,7 +661,7 @@ class BrokerManager:
                 pass
 
         bootstrap = json.dumps(
-            {"auth_key": encoded_key, "tokens": dict(tokens)}, separators=(",", ":"), ensure_ascii=False
+            {"auth_key": encoded_key, "tokens": available_tokens}, separators=(",", ":"), ensure_ascii=False
         ).encode("utf-8")
         try:
             _write_all(write_fd, len(bootstrap).to_bytes(4, "big") + bootstrap)
@@ -565,11 +718,33 @@ class BrokerManager:
         if state is None:
             return BrokerStatus(active=False)
         try:
-            BrokerClient(state).request("shutdown")
+            BrokerClient(state).request("status")
         except DevtoolsError:
-            pass
-        self._clear_state(profile, state)
-        return BrokerStatus(active=False)
+            if self._process_is_alive(state.pid):
+                raise BrokerError(
+                    "Credential broker could not be authenticated for shutdown; session metadata was retained."
+                ) from None
+            # There is no live broker process left to shut down; this is stale metadata.
+            self._clear_state(profile, state)
+            return BrokerStatus(active=False)
+
+        try:
+            BrokerClient(state).request("shutdown")
+        except DevtoolsError as exc:
+            # Do not clear metadata while an authenticated broker may still retain tokens.
+            raise BrokerError(
+                "Credential broker shutdown was not acknowledged; session metadata was retained."
+            ) from exc
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            try:
+                BrokerClient(state).request("status")
+            except DevtoolsError:
+                self._clear_state(profile, state)
+                return BrokerStatus(active=False)
+            time.sleep(0.05)
+        raise BrokerError("Credential broker is still active after shutdown; session metadata was retained.")
 
 
 def _main(argv: list[str] | None = None) -> int:

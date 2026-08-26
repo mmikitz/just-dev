@@ -9,7 +9,7 @@ from just_dev.models import ProjectConfig
 def config() -> ProjectConfig:
     return ProjectConfig.model_validate(
         {
-            "atlassian": {"cloud_id": "cloud-123"},
+            "atlassian": {"cloud_id": "00000000-0000-4000-8000-000000000123"},
             "jira": {
                 "presets": {"bug": {"project": "DEV", "issue_type": "Task", "labels": ["auto-filed"], "components": []}}
             },

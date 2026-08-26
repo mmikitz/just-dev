@@ -111,6 +111,23 @@ def test_jira_read_update_and_delete_forward_all_request_values(config, tmp_path
     assert broker.calls[2][1]["parameters"] == {"deleteSubtasks": True}
 
 
+def test_jira_operation_uses_the_runtime_resolved_cloud_id_in_broker_payload(config, tmp_path) -> None:
+    broker = FakeBroker()
+    site_config = config.model_copy(
+        update={"atlassian": config.atlassian.model_copy(update={"cloud_id": "https://example.atlassian.net"})}
+    )
+    service = DevtoolsService(
+        site_config,
+        tmp_path,
+        broker,
+        cloud_id_resolver=lambda configured: "00000000-0000-4000-8000-000000000456",
+    )
+
+    service.read_jira_issue("DEV-1", fields="summary")
+
+    assert broker.calls[0][1]["config"]["atlassian"]["cloud_id"] == "00000000-0000-4000-8000-000000000456"
+
+
 def test_update_jira_issue_requires_something_to_change(config, tmp_path) -> None:
     broker = FakeBroker()
     service = DevtoolsService(config, tmp_path, broker)

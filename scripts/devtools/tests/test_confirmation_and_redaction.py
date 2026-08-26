@@ -22,3 +22,8 @@ def test_token_redaction_handles_known_tokens_headers_and_mapping_keys() -> None
     assert token not in result
     assert REDACTED in result
     assert redact_data({"token": token, "message": token}, [token]) == {"token": REDACTED, "message": REDACTED}
+
+
+def test_empty_tokens_are_ignored_by_redaction() -> None:
+    assert redact_text("status=ok", [""]) == "status=ok"
+    assert redact_data({"message": "status=ok"}, [""]) == {"message": "status=ok"}

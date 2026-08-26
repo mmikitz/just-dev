@@ -1,7 +1,8 @@
 # Copy this file to project.toml and replace every example value before use.
 
 [atlassian]
-# The Cloud ID, not a hostname. Scoped tokens are sent only to this tenant.
+# A Cloud-ID UUID or canonical site URL; scoped tokens are sent only to this tenant.
+# Example URL: https://example.atlassian.net
 cloud_id = "REPLACE_WITH_ATLASSIAN_CLOUD_ID"
 
 [jira.presets.bug]
