@@ -16,9 +16,19 @@ added after a later live-Jira exploratory QA pass (see
 (F1–F3, F6, R5, U2) were fixed in code — the fix commit changed adapters,
 workflows, and the CLI, but left this document unchanged, so the generalizable
 lesson behind each fix wasn't captured anywhere a future change would see it
-before repeating the same mistake with a new command. Each principle below
-cites something concrete and checkable in this codebase — a file, a test, or
-an actual command's behavior — rather than an abstract claim.
+before repeating the same mistake with a new command. Principles 20–24 came
+from a pass that checked the command surface against the Model Context
+Protocol's `Tool` type — name, description, `inputSchema`, `outputSchema`,
+behavior annotations, one result per call — as an externally-maintained
+checklist for exactly the audience this document names second and serves
+worst: a caller that cannot read a help box. That pass adopted the tool's
+*contract* shape, not MCP's wire protocol; this CLI does not speak MCP and
+these principles say nothing about JSON-RPC framing, sessions, or transports.
+Its own F-numbered findings (F1–F9) are unrelated to the QA-report pass's
+F1–F3 above; both series exist independently in their own reports. Each
+principle below cites something concrete and checkable in this codebase — a
+file, a test, or an actual command's behavior — rather than an abstract
+claim.
 
 ## The principles
 
@@ -270,6 +280,94 @@ pins this. `--view full`/`--format json` remain how an agent gets the
 complete representation (principle 6); the default should not require
 scrolling to answer the obvious question.
 
+## 20. One invocation, one machine-readable result (new in the MCP-compatibility pass)
+
+Under `--format json`, everything on stdout for a single command invocation
+must parse as exactly one JSON document. A preview, a warning, or progress
+commentary is not the result — it belongs on stderr. `_announce_preview` in
+`cli.py` sends every mutation's preview there in the same bare shape
+`--dry-run` returns as its result, so a caller that parses stdout never sees
+`{"preview": {...}}` and the real result concatenated on separate lines.
+Before this fix, a confirmed (`--yes`) mutation under `--format json` wrote
+the preview and the result as two back-to-back JSON documents on stdout —
+`json.loads` on the captured output raised `Extra data` — while `--dry-run`
+returned the same preview bare. `tests/test_cli.py::
+test_confirmed_mutation_puts_exactly_one_json_document_on_stdout` pins the
+fixed shape. Any future command that reports progress before its result must
+route that progress through `_announce_preview`/`err=True`, not the plain
+`_emit` used for the final return value.
+
+## 21. A failure is machine-readable too (new in the MCP-compatibility pass)
+
+The exit code says which class failed (principle 18); under `--format json`
+the message must say what failed in the same structured form a success gets,
+not force a caller to parse an English sentence for detail principle 13
+already extracted from the remote service. `DevtoolsError.kind` in
+`errors.py` derives a stable snake_case category from the exception's class
+name (`InputValidationError` → `input_validation`), and `_execute` in
+`cli.py` emits `{"error": {"code", "kind", "message"}}` on stderr when the
+effective output format is `json`; text and Markdown keep the plain `error:
+...` line unchanged, and exit codes are unaffected either way. Before this
+fix, every format printed the identical prose line, so a JSON-consuming
+caller had no structured way to read *why* a call failed beyond its exit
+code. `tests/test_jira_cli_validation.py::
+test_read_jira_issue_reports_a_structured_json_error_under_format_json`
+covers the new shape.
+
+## 22. Declare the machine contract; don't only document it (new in the MCP-compatibility pass)
+
+Types, enum members, and read-only/destructive/idempotent behavior must be
+obtainable from a command, not only from a `help=` sentence a caller has to
+already know to read. `just describe-commands` (`src/just_dev/introspect.py`)
+builds one MCP-shaped tool descriptor per command — `name`, `description`,
+`inputSchema`, `outputSchema` where the shape is genuinely stable, and
+`annotations` — from the CLI's own Typer/Click introspection plus a small
+hand-written annotation table, so the manifest cannot silently drift from the
+real commands the way prose documentation can. It closes the gap
+`OPEN_ISSUES.md`'s U3 left open: `just --list <namespace>` shows a recipe's
+name and positional arguments, but a flag's own name is invisible even to
+`--list`, printed only as the literal placeholder `[OPTIONS]`.
+
+A command's `description` in that manifest comes from its Typer docstring;
+the nine Jira commands didn't have one before this pass (their `--help`
+still worked — Typer falls back to each option's own `help=` — but a tool-
+list entry's `description` field would have been empty). One flag name must
+also mean one type across sibling commands: `--fields` used to be a JSON
+object on `create-jira-issue`/`update-jira-issue` and a comma-separated
+field list on `read-jira-issue`/`search-jira-issues`, indistinguishable from
+`--help` alone; `describe-commands`' per-command schema overrides make that
+collision explicit instead of implicit. `tests/test_introspect.py` pins the
+annotation table, the `--fields`/`--view` schema shapes, and that every Jira
+command's description is non-empty.
+
+## 23. Consent is an argument, not an ambient setting (new in the MCP-compatibility pass)
+
+`JUST_DEV_*` environment variables exist to carry data into the CLI without
+shell interpolation (principle 7) — not to silently waive a safety check. A
+mutation confirmed via `JUST_DEV_YES=1` rather than an explicit `--yes` on
+the command line announces itself on stderr (`confirmation waived by
+JUST_DEV_YES`, from `_yes_or_environment` in `cli.py`) so the waiver has a
+trace even when it isn't in the invocation an operator or a log would show.
+Before this fix, one `export JUST_DEV_YES=1` — plausible in an agent
+harness, a CI shim, or a stray `.envrc` — removed the confirmation gate from
+every mutation for the rest of that shell session with zero trace anywhere
+in the output. `tests/test_cli.py::
+test_just_dev_yes_environment_variable_announces_the_waiver_on_stderr` and
+`::test_explicit_yes_does_not_announce_a_waiver` cover both paths.
+
+## 24. Cross-call state is an explicit argument (new in the MCP-compatibility pass)
+
+What a caller carries between invocations must be a value handed back and
+accepted again as an ordinary argument — exactly what
+`search-jira-issues --next-page-token` already does with the token Jira
+returns. The local credential broker session is the deliberate counterpart:
+it is unlocked once by a human (`unlock-secrets`, which prompts on a local
+TTY) and never passed around as a value, because no agent can or should
+drive that prompt. `show-auth-status` is the machine-readable check for
+which state currently applies; state this codebase does not have yet
+should follow the same rule when it's added, rather than inventing a
+session or a handshake this CLI has no process boundary to need.
+
 ## Checklist for adding a new command
 
 1. **Decide: new command or new flag?** Apply principle 12 above. If the
@@ -278,20 +376,25 @@ scrolling to answer the obvious question.
    request body, it's a flag on the existing command.
 2. **`recipes/{service}.just`** — add (or extend) a recipe block:
    `[working-directory(devtools_root)]` + `[env('JUST_DEV_PROJECT_ROOT',
-   project_root)]` + one `[arg('JUST_DEV_X', long='x')]` per flag (including
-   `--dry-run`/`--yes`/`--format`/`--safe` for a mutation), then a
-   positional-env-var recipe signature that just calls `uv run --locked
-   just-dev <module> <command>`.
+   project_root)]` + one `[arg('JUST_DEV_X', long='x', help='...')]` per flag
+   (including `--dry-run`/`--yes`/`--format`/`--safe` for a mutation, and
+   `pattern='|a|b'` — with a leading empty alternative for the default empty
+   value — for a true enum flag like `--view`), then a positional-env-var
+   recipe signature that just calls `uv run --locked just-dev <module>
+   <command>`.
 3. **`justfile`** — add `alias <command> := <module>::<command>` so the flat
    and namespaced forms both exist (principle 8).
-4. **`src/just_dev/cli.py`** — a `@{service}_app.command(...)` function:
-   `context: typer.Context` first, every value routed through
+4. **`src/just_dev/cli.py`** — a `@{service}_app.command(...)` function with a
+   one-line docstring (its manifest `description` in `describe-commands` —
+   principle 22): `context: typer.Context` first, every value routed through
    `_argument_or_environment` / `_optional_value_or_environment` /
    `_flag_or_environment` / `_option_or_environment` (never typer's native
    "required parameter" mechanism — recipes pass values via env vars with
    CLI defaults of `None`), always ending `dry_run, yes, profile,
    output_format, safe` for a mutation. Call `_set_command_output_options`
-   then `_execute(context, lambda: ...)`.
+   then `_execute(context, lambda: ...)`, with `announce=lambda preview:
+   _announce_preview(context, preview)` and `yes=_yes_or_environment(yes)`
+   for a mutation (principles 20, 23).
 5. **`src/just_dev/workflows.py`** (`DevtoolsService`) — validate inputs,
    build a `PreviewResult`, return it immediately if `dry_run` (before any
    broker call — principle 9), else `announce(preview)` then
@@ -310,10 +413,14 @@ scrolling to answer the obvious question.
 8. **Tests** — extend the fakes in `tests/test_operations.py`,
    `tests/test_workflows.py`, and `tests/test_adapters.py`; add the command to
    `ALIASES`/`RECIPES` in `tests/test_justfiles.py`; add a `--dry-run` case to
-   `tests/test_cli.py` if it's a new command (not just a new flag).
+   `tests/test_cli.py` if it's a new command (not just a new flag); a new
+   mutation also needs an entry in `introspect.ANNOTATIONS`
+   (`readOnly`/`destructive`/`idempotent` — principle 22) or it falls back to
+   the conservative MCP-spec default (`{"readOnly": false, "destructive":
+   true, "idempotent": false}`), which is safe but not necessarily accurate.
 9. **Docs** — one example line in `README.md`'s everyday-commands block, one
    row in `ARCHITECTURE.md`'s command table.
-10. **Re-check against principles 1–19** — does `--help` alone explain it?
+10. **Re-check against principles 1–24** — does `--help` alone explain it?
     Does it accept `--format`/`--safe`? Does it preview and confirm before
     writing? Would an agent scripting against it need to know anything this
     document and `--help` don't already say? Does every remote-calling method
@@ -326,4 +433,11 @@ scrolling to answer the obvious question.
     Does it reject cheaply-checkable-locally input before any network call
     (17)? Does a genuinely new failure class get its own exit code, added to
     the README table (18)? Does its default output lead with the fields a
-    person actually asked for (19)?
+    person actually asked for (19)? Does a mutation's preview go through
+    `_announce_preview` so `--format json` stdout stays one document (20)?
+    Does a structured `--format json` failure carry the same detail principle
+    13 already extracts (21)? Does `describe-commands` need a schema override
+    or an `ANNOTATIONS` entry for this command (22)? Does a waived
+    confirmation announce itself when it didn't come from `--yes` on the
+    command line (23)? Does any new cross-call state travel as an explicit
+    argument rather than an implicit session (24)?

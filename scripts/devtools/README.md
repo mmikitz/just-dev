@@ -157,9 +157,27 @@ just search-jira-issues 'project = FUTUREAERO' --view full --format json --safe
 ```
 
 All public result recipes accept `--format text|markdown|json` and `--safe`.
-Safe output structurally omits identity/account fields, URLs, and attachment
-metadata. It cannot reliably classify personal information embedded in free
-text such as an issue description or comment.
+Safe output structurally redacts identity/account fields, URLs, and
+attachment metadata by replacing each value with `"[OMITTED]"` rather than
+deleting the key — so a caller can tell "redacted by `--safe`" apart from
+"absent in the source data", and any declared `outputSchema` (see
+`describe-commands` below) still holds. It cannot reliably classify personal
+information embedded in free text such as an issue description or comment.
+
+## Machine-readable command discovery
+
+```text
+just describe-commands [--format text|markdown|json] [--safe]
+```
+
+Lists every command as an MCP-shaped tool descriptor — `name` (dotted by
+namespace, e.g. `jira.read-jira-issue`), `description`, `inputSchema`,
+`outputSchema` where the result shape is stable, and
+`readOnly`/`destructive`/`idempotent` annotations — built from the CLI's own
+Typer/Click introspection plus a small hand-written annotation table. Use
+`--format json` for a script or an agent; `just --list <namespace>` remains
+the right tool for a human skimming recipe names (it does not disclose flag
+names — they print as the literal placeholder `[OPTIONS]`).
 
 ## Everyday commands
 
@@ -168,6 +186,7 @@ The flat form is preferred; the namespaced form is equivalent, for example
 
 ```text
 just check-devtools
+just describe-commands --format json
 just qa
 just check-changed
 just install-hooks
@@ -199,9 +218,15 @@ just verify-project | run-ci
 ```
 
 Mutating commands support `--dry-run` and `--yes`. Without `--yes`, the tool
-shows a preview and requires interactive confirmation. Jira create presets
-control project, issue type, labels, and components; custom `--fields` cannot
-override those preset-managed fields.
+shows a preview and requires interactive confirmation. A mutation's preview
+is written to stderr, not stdout — `--format json`'s stdout always carries
+exactly one JSON document, the result. `--yes` can also come from the
+`JUST_DEV_YES=1` environment variable (as every recipe passes it through);
+when the confirmation is waived that way instead of by an explicit `--yes`
+on the command line, the CLI announces `confirmation waived by
+JUST_DEV_YES` on stderr so the waiver leaves a trace. Jira create presets
+control project, issue type, labels, and components; custom `--fields`
+cannot override those preset-managed fields.
 
 `assign-jira-issue --assignee` accepts either a Jira accountId or an email
 address; an email is resolved to an accountId via Jira's user search, and the
@@ -246,19 +271,23 @@ just qa
 ## Exit codes
 
 Every command's exit code names the failure class, so scripts can branch on
-it without parsing error text:
+it without parsing error text. Under `--format json`, a failure is also one
+JSON document on stderr — `{"error": {"code": 25, "kind": "input_validation",
+"message": "..."}}` — so a caller doesn't have to parse English to recover
+the same detail; `kind` is a stable snake_case name derived from the error
+class. Text and Markdown output keep the plain `error: ...` line unchanged.
 
-| Code | Meaning |
-| ---- | ------- |
-| `0`  | Success. |
-| `1`  | Unexpected/unhandled failure. |
-| `2`  | CLI usage error (missing/unknown flag or argument). |
-| `20` | Configuration error (missing or invalid project/profile config). |
-| `21` | Authentication error (credentials rejected or missing). |
-| `22` | Permission denied by the remote service. |
-| `23` | Conflict (the remote resource changed since it was read). |
-| `24` | Network/remote-service error (including rate limiting). |
-| `25` | Input validation error (bad argument, value, or remote 4xx rejection). |
-| `26` | Confirmation refused (mutating command run without `--yes` outside a TTY). |
-| `27` | Broker error (local credential broker failure). |
-| `28` | Verification error (`verify-project`/`run-ci` check failed). |
+| Code | `kind` (in `--format json` errors) | Meaning |
+| ---- | ----------------------------------- | ------- |
+| `0`  | —                       | Success. |
+| `1`  | —                       | Unexpected/unhandled failure. |
+| `2`  | —                       | CLI usage error (missing/unknown flag or argument). |
+| `20` | `configuration`         | Configuration error (missing or invalid project/profile config). |
+| `21` | `authentication`        | Authentication error (credentials rejected or missing). |
+| `22` | `permission_denied`     | Permission denied by the remote service. |
+| `23` | `conflict`              | Conflict (the remote resource changed since it was read). |
+| `24` | `network`               | Network/remote-service error (including rate limiting). |
+| `25` | `input_validation`      | Input validation error (bad argument, value, or remote 4xx rejection). |
+| `26` | `confirmation`          | Confirmation refused (mutating command run without `--yes` outside a TTY). |
+| `27` | `broker`                | Broker error (local credential broker failure). |
+| `28` | `verification`          | Verification error (`verify-project`/`run-ci` check failed). |

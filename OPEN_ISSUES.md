@@ -50,6 +50,26 @@ Jira Cloud and found three defects, all now fixed on this branch:
 `just <recipe> --help` is not going to be made to work. Rationale below,
 kept alongside the original analysis for context.
 
+**Correction (2026-08-27, MCP tool-contract compatibility analysis):** the
+resolution above overstates what `just --list <namespace>` actually
+discloses. It prints only the literal placeholder `[OPTIONS]` for a
+recipe's flags — no flag name is shown to a human or a machine:
+
+```text
+$ just --list jira
+    read-jira-issue [OPTIONS] $JUST_DEV_JIRA_ISSUE_ID_OR_KEY
+```
+
+`--list` still covers what it was originally credited for (recipe names and
+required positional arguments), so the won't-fix stands for `just <recipe>
+--help` specifically. But it is not itself a flag-discovery path, and
+nothing else machine-readable filled that gap until `just describe-commands`
+was added: a manifest of every command's flags, types, and behavior hints
+built from the Python CLI's own Typer/Click introspection (see
+`src/just_dev/introspect.py` and UX-DESIGN-PRINCIPLES.md principle 22). Use
+`just describe-commands --format json` for machine discovery; `just --list
+<namespace>` remains the right tool for a human skimming recipe names.
+
 **Why won't-fix:** every recipe body in `scripts/devtools/recipes/*.just` is
 today a trivial one-liner that delegates entirely to the Python CLI — none
 of the ~25 recipes across `jira.just`, `bitbucket.just`, `jenkins.just`, and

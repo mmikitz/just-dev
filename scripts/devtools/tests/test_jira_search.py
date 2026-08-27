@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from just_dev.jira import prepare_search_view, render_search_markdown
-from just_dev.rendering import filter_safe_output, render
+from just_dev.rendering import OMITTED, filter_safe_output, render
 
 
 def _search_response() -> dict:
@@ -88,8 +88,8 @@ def test_render_search_markdown_omits_the_next_page_note_when_absent() -> None:
 def test_safe_filter_strips_assignee_reporter_and_urls_from_every_issue() -> None:
     safe = filter_safe_output(prepare_search_view(_search_response(), view="full"))
 
-    assert "self" not in safe["issues"][0]
-    assert "assignee" not in safe["issues"][0]["fields"]
-    assert "reporter" not in safe["issues"][0]["fields"]
+    assert safe["issues"][0]["self"] == OMITTED
+    assert safe["issues"][0]["fields"]["assignee"] == OMITTED
+    assert safe["issues"][0]["fields"]["reporter"] == OMITTED
     assert safe["issues"][0]["fields"]["description"] == "Customer says the login button fails."
     assert "Investigate login failure" in render(safe, "markdown")

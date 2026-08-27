@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from just_dev.jira import jira_fields_parameter, parse_includes, prepare_issue_view, render_issue_markdown
-from just_dev.rendering import filter_safe_output, render
+from just_dev.rendering import OMITTED, filter_safe_output, render
 
 
 def _issue() -> dict:
@@ -64,13 +64,13 @@ def test_safe_filter_removes_structural_personal_data_urls_and_attachment_metada
     )
 
     assert "self" not in safe
-    assert "assignee" not in safe["fields"]
-    assert "reporter" not in safe["fields"]
+    assert safe["fields"]["assignee"] == OMITTED
+    assert safe["fields"]["reporter"] == OMITTED
     # The attachment list itself is structural, not PII, and must survive so
     # --include attachments --safe still shows something; only its nested
-    # PII/URL leaves (e.g. "content") are stripped.
-    assert safe["fields"]["attachment"] == [{"filename": "screen.png"}]
-    assert "author" not in safe["fields"]["comment"]["comments"][0]
+    # PII/URL leaves (e.g. "content") are redacted in place.
+    assert safe["fields"]["attachment"] == [{"filename": "screen.png", "content": OMITTED}]
+    assert safe["fields"]["comment"]["comments"][0]["author"] == OMITTED
     assert safe["fields"]["description"] == "Customer says the login button fails."
     assert "Customer says" in render(safe, "markdown")
 
@@ -97,4 +97,4 @@ def test_safe_filter_keeps_attach_jira_issues_own_top_level_result_shape() -> No
 
     assert safe["issue_id_or_key"] == "DEV-1"
     assert safe["filename"] == "notes.txt"
-    assert safe["attachments"] == [{"id": "20001", "filename": "notes.txt"}]
+    assert safe["attachments"] == [{"id": "20001", "filename": "notes.txt", "author": OMITTED, "content": OMITTED}]

@@ -16,6 +16,7 @@ REPO_ROOT = ROOT.parents[1]
 # Every public alias and the module::recipe it must behave identically to (ARCHITECTURE.md's command table).
 ALIASES = (
     "check-devtools",
+    "describe-commands",
     "qa",
     "check-changed",
     "install-hooks",
@@ -52,6 +53,7 @@ ALIASES = (
 # `just-dev` CLI argv, i.e. what the recipe body invokes after "uv run --locked just-dev").
 RECIPES: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]], ...] = (
     ("check-devtools", "devtools", "check-devtools", (), (), ("check-devtools",)),
+    ("describe-commands", "devtools", "describe-commands", (), (), ("describe-commands",)),
     ("configure-auth", "auth", "configure-auth", (), (), ("auth", "configure-auth")),
     ("unlock-secrets", "auth", "unlock-secrets", (), (), ("auth", "unlock-secrets")),
     ("show-auth-status", "auth", "show-auth-status", (), (), ("auth", "show-auth-status")),
