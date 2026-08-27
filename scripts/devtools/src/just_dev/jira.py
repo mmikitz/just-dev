@@ -211,3 +211,40 @@ def _display_value(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+_ATTACHMENT_SUMMARY_FIELDS = ("id", "size")
+
+
+def prepare_attach_view(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Condense a raw Jira attach-file response to the fields that confirm success.
+
+    Jira's created-attachment objects carry the same nested author/avatar/URL
+    bulk that read-jira-issue already collapses for its own view; the useful
+    confirmation here is just which file landed on which issue.
+    """
+
+    result = {key: value[key] for key in ("issue_id_or_key", "filename") if key in value}
+    attachments = value.get("attachments")
+    if isinstance(attachments, list):
+        result["attachments"] = [
+            {key: item[key] for key in _ATTACHMENT_SUMMARY_FIELDS if key in item}
+            for item in attachments
+            if isinstance(item, Mapping)
+        ]
+    return result
+
+
+def render_attach_markdown(value: Any) -> str:
+    """A one-line Markdown confirmation for attach-jira-issue, instead of a raw API dump."""
+
+    if not isinstance(value, Mapping):
+        return render_markdown(value)
+    issue = value.get("issue_id_or_key")
+    filename = value.get("filename")
+    if not issue or not filename:
+        return render_markdown(value)
+    attachments = value.get("attachments")
+    size = attachments[0].get("size") if isinstance(attachments, list) and attachments else None
+    detail = f" ({size} bytes)" if size is not None else ""
+    return f"Attached **{filename}**{detail} to **{issue}**."
