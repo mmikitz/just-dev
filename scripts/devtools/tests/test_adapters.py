@@ -6,7 +6,13 @@ from requests.exceptions import RequestException, Timeout
 
 import just_dev.adapters as adapters
 from just_dev.adapters import BitbucketAdapter, ConfluenceAdapter, JenkinsAdapter, JiraAdapter
-from just_dev.errors import AuthenticationError, ConflictError, NetworkError, PermissionDeniedError
+from just_dev.errors import (
+    AuthenticationError,
+    ConflictError,
+    InputValidationError,
+    NetworkError,
+    PermissionDeniedError,
+)
 from just_dev.models import BitbucketSettings, ConfluencePreset, JenkinsPreset, JenkinsSettings
 
 
@@ -264,6 +270,62 @@ def test_jira_adapter_assign_and_transition_fall_back_when_jira_returns_no_conte
     }
 
 
+def test_jira_adapter_assign_issue_resolves_an_email_to_its_account_id() -> None:
+    class FakeJiraUsers:
+        def __init__(self, users: list[dict]) -> None:
+            self.users = users
+            self.put_calls: list[tuple] = []
+
+        def resource_url(self, resource, api_root=None, api_version=None):
+            return f"rest/api/3/{resource}"
+
+        def user_find_by_user_string(self, *, query):
+            return [user for user in self.users if user["emailAddress"].lower() == query.lower()]
+
+        def put(self, path, *, data=None, params=None):
+            self.put_calls.append((path, data, params))
+            return None
+
+    client = FakeJiraUsers([{"accountId": "abc123", "emailAddress": "ada@example.com", "displayName": "Ada"}])
+    adapter = JiraAdapter("cloud", lambda token: client)
+
+    result = adapter.assign_issue("secret", "DEV-1", "ada@example.com")
+
+    assert result == {"issue_id_or_key": "DEV-1", "assignee": "abc123"}
+    assert client.put_calls == [("rest/api/3/issue/DEV-1/assignee", {"accountId": "abc123"}, None)]
+
+
+def test_jira_adapter_assign_issue_rejects_an_email_with_no_match() -> None:
+    class FakeJiraUsers:
+        def resource_url(self, resource, api_root=None, api_version=None):
+            return f"rest/api/3/{resource}"
+
+        def user_find_by_user_string(self, *, query):
+            return []
+
+    adapter = JiraAdapter("cloud", lambda token: FakeJiraUsers())
+
+    with pytest.raises(InputValidationError, match="No Jira user found"):
+        adapter.assign_issue("secret", "DEV-1", "nobody@example.com")
+
+
+def test_jira_adapter_assign_issue_rejects_an_ambiguous_email() -> None:
+    class FakeJiraUsers:
+        def resource_url(self, resource, api_root=None, api_version=None):
+            return f"rest/api/3/{resource}"
+
+        def user_find_by_user_string(self, *, query):
+            return [
+                {"accountId": "abc123", "emailAddress": "team@example.com"},
+                {"accountId": "def456", "emailAddress": "team@example.com"},
+            ]
+
+    adapter = JiraAdapter("cloud", lambda token: FakeJiraUsers())
+
+    with pytest.raises(InputValidationError, match="matched multiple Jira users"):
+        adapter.assign_issue("secret", "DEV-1", "team@example.com")
+
+
 def test_bitbucket_adapter_approves_via_native_cloud_endpoint_without_a_user_slug() -> None:
     client = FakeBitbucket([])
     settings = BitbucketSettings(workspace="w", repository="r", username="u")
@@ -515,6 +577,62 @@ def test_sdk_http_status_maps_to_a_stable_error_category(status_code, expected_e
         JiraAdapter("cloud", lambda token: FailingJira()).read_issue("secret", "DEV-1", {})
 
     assert "secret" not in str(raised.value)
+
+
+class _FakeHttpResponseWithBody(_FakeHttpResponse):
+    def __init__(self, status_code: int, body: object) -> None:
+        super().__init__(status_code)
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+def test_sdk_error_surfaces_jiras_own_error_messages_from_the_response_body() -> None:
+    class FailingJira:
+        def resource_url(self, *args, **kwargs):
+            return "rest/api/3/issue"
+
+        def get(self, *args, **kwargs):
+            body = {"errorMessages": ["Issue does not exist or you do not have permission to see it."], "errors": {}}
+            raise RequestException("not found", response=_FakeHttpResponseWithBody(404, body))
+
+    with pytest.raises(InputValidationError) as raised:
+        JiraAdapter("cloud", lambda token: FailingJira()).read_issue("secret", "DEV-99999", {})
+
+    assert "Issue does not exist" in str(raised.value)
+
+
+def test_sdk_error_surfaces_field_level_errors_and_still_redacts_secrets() -> None:
+    class FailingJira:
+        def resource_url(self, *args, **kwargs):
+            return "rest/api/3/issue"
+
+        def post(self, *args, **kwargs):
+            body = {"errorMessages": [], "errors": {"summary": "token=secret-value the field exceeds 255 characters"}}
+            raise RequestException("bad request", response=_FakeHttpResponseWithBody(400, body))
+
+    with pytest.raises(InputValidationError) as raised:
+        JiraAdapter("cloud", lambda token: FailingJira()).create_issue("secret", {"fields": {}})
+
+    message = str(raised.value)
+    assert "summary: " in message
+    assert "exceeds 255 characters" in message
+    assert "secret-value" not in message
+
+
+def test_sdk_error_without_a_parsable_body_keeps_the_generic_message() -> None:
+    class FailingJira:
+        def resource_url(self, *args, **kwargs):
+            return "rest/api/3/issue"
+
+        def get(self, *args, **kwargs):
+            raise RequestException("bad request", response=_FakeHttpResponse(400))
+
+    with pytest.raises(InputValidationError) as raised:
+        JiraAdapter("cloud", lambda token: FailingJira()).read_issue("secret", "DEV-1", {})
+
+    assert str(raised.value) == "Remote service rejected the request (400)."
 
 
 def test_sdk_timeout_without_a_response_falls_back_to_a_generic_network_error() -> None:

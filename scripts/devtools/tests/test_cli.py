@@ -60,6 +60,31 @@ def test_runtime_service_selects_broker_from_the_ci_environment_variable(config,
     assert isinstance(runtime.service("default").broker, _LazyBroker)
 
 
+def test_show_auth_status_reports_ci_tokens_instead_of_the_absent_local_broker(monkeypatch) -> None:
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("JUST_DEV_CI_JIRA_TOKEN", "ci-secret")
+    for scope in ("CONFLUENCE", "BITBUCKET", "JENKINS"):
+        monkeypatch.delenv(f"JUST_DEV_CI_{scope}_TOKEN", raising=False)
+
+    result = CliRunner().invoke(app, ["--format", "json", "auth", "show-auth-status"])
+
+    assert result.exit_code == 0, result.output
+    assert '"active": true' in result.output
+    assert '"source": "ci"' in result.output
+
+
+def test_show_auth_status_reports_inactive_in_ci_with_no_tokens_configured(monkeypatch) -> None:
+    monkeypatch.setenv("CI", "true")
+    for scope in ("JIRA", "CONFLUENCE", "BITBUCKET", "JENKINS"):
+        monkeypatch.delenv(f"JUST_DEV_CI_{scope}_TOKEN", raising=False)
+
+    result = CliRunner().invoke(app, ["--format", "json", "auth", "show-auth-status"])
+
+    assert result.exit_code == 0, result.output
+    assert '"active": false' in result.output
+    assert '"source": "ci"' in result.output
+
+
 def test_ci_operation_client_uses_process_injected_credentials_without_broker(monkeypatch) -> None:
     captured = {}
 

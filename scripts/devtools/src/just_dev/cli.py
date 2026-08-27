@@ -17,7 +17,7 @@ from .broker import REQUIRED_SCOPES, BrokerManager, CloudIdCache, KeePassProfile
 from .config import load_project_config, project_root_from_environment
 from .errors import AuthenticationError, DevtoolsError, InputValidationError
 from .jira import parse_includes, prepare_issue_view, render_issue_markdown, validate_view
-from .models import PreviewResult
+from .models import BrokerStatus, PreviewResult
 from .operations import execute_operation
 from .redaction import redact_data, redact_text
 from .rendering import filter_safe_output, known_safe_output_formats, render_markdown, render_text
@@ -36,6 +36,18 @@ app.add_typer(bitbucket_app, name="bitbucket")
 app.add_typer(jenkins_app, name="jenkins")
 app.add_typer(confluence_app, name="confluence")
 app.add_typer(project_app, name="project")
+
+_CI_SCOPES = ("jira", "confluence", "bitbucket", "jenkins")
+
+
+def _ci_enabled() -> bool:
+    return os.environ.get("CI", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ci_configured_scopes() -> list[str]:
+    """Scopes with a CI credential token set, mirroring `_CiOperationClient`'s lookup."""
+
+    return sorted(scope for scope in _CI_SCOPES if os.environ.get(f"JUST_DEV_CI_{scope.upper()}_TOKEN", ""))
 
 
 @dataclass
@@ -69,7 +81,7 @@ class Runtime:
         if not require_broker:
             broker: Any = _NoBroker()
             cloud_id_resolver = None
-        elif os.environ.get("CI", "").strip().lower() in {"1", "true", "yes", "on"}:
+        elif _ci_enabled():
             broker = _CiOperationClient()
             cloud_id_resolver = resolve_site_cloud_id
         else:
@@ -103,10 +115,7 @@ class _CiOperationClient:
     """CI-only execution with credentials injected by the job's credentials store."""
 
     def invoke(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
-        tokens = {
-            scope: os.environ.get(f"JUST_DEV_CI_{scope.upper()}_TOKEN", "")
-            for scope in ("jira", "confluence", "bitbucket", "jenkins")
-        }
+        tokens = {scope: os.environ.get(f"JUST_DEV_CI_{scope.upper()}_TOKEN", "") for scope in _CI_SCOPES}
         try:
             return execute_operation(tokens, operation, {**payload, "__just_dev_ci": True})
         except DevtoolsError as error:
@@ -401,7 +410,15 @@ def show_auth_status(
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
     _set_command_output_options(context, output_format, safe)
-    _execute(context, lambda: BrokerManager().status(profile))
+
+    def action() -> BrokerStatus:
+        if _ci_enabled():
+            # CI never uses the local KeePass broker; report on the env-var tokens it
+            # actually authenticates with instead of a broker session that doesn't exist.
+            return BrokerStatus(active=bool(_ci_configured_scopes()), source="ci")
+        return BrokerManager().status(profile)
+
+    _execute(context, action)
 
 
 @auth_app.command("lock-secrets")
@@ -566,7 +583,9 @@ def update_jira_issue(
 def assign_jira_issue(
     context: typer.Context,
     issue_id_or_key: Annotated[str | None, typer.Argument(help="Issue ID or key, e.g. ABC-123.")] = None,
-    assignee: Annotated[str | None, typer.Option("--assignee", help="Assignee's Jira account ID.")] = None,
+    assignee: Annotated[
+        str | None, typer.Option("--assignee", help="Assignee's Jira account ID, or their email address.")
+    ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
     profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
@@ -583,7 +602,7 @@ def assign_jira_issue(
             .service(profile)
             .assign_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
-                _argument_or_environment(assignee, "JUST_DEV_JIRA_ASSIGNEE", "Assignee account ID"),
+                _argument_or_environment(assignee, "JUST_DEV_JIRA_ASSIGNEE", "Assignee account ID or email"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
                 yes=_flag_or_environment(yes, "JUST_DEV_YES"),
                 announce=lambda preview: _emit(context, {"preview": preview}),
