@@ -163,6 +163,26 @@ def test_search_jira_issues_forwards_jql_fields_view_limit_and_pagination(config
     }
 
 
+def test_search_jira_issues_full_view_without_explicit_fields_requests_all_fields(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    service.search_jira_issues("project = DEV", view="full")
+
+    # search/jql (unlike the single-issue read endpoint) returns no fields at
+    # all when the parameter is omitted, so a full view must ask explicitly.
+    assert broker.calls[0][1]["parameters"]["fields"] == "*all"
+
+
+def test_search_jira_issues_summary_view_without_explicit_fields_uses_the_compact_default(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    service.search_jira_issues("project = DEV")
+
+    assert broker.calls[0][1]["parameters"]["fields"] == "summary,status,assignee,reporter,issuetype,priority"
+
+
 def test_search_jira_issues_rejects_an_empty_jql(config, tmp_path) -> None:
     broker = FakeBroker()
     service = DevtoolsService(config, tmp_path, broker)

@@ -310,7 +310,7 @@ class DevtoolsService:
         view = validate_view(view)
         if limit is not None and not 1 <= limit <= 100:
             raise InputValidationError("--limit must be between 1 and 100.")
-        fields_parameter = jira_fields_parameter(fields, view=view)
+        fields_parameter = jira_fields_parameter(fields, view=view, full_view_sentinel="*all")
         parameters = {
             key: value
             for key, value in (

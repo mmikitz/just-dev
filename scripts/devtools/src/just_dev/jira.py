@@ -48,8 +48,16 @@ def jira_fields_parameter(
     *,
     includes: Sequence[str] = (),
     view: str = "summary",
+    full_view_sentinel: str | None = None,
 ) -> str | None:
-    """Choose a server-side field list, keeping the human default compact."""
+    """Choose a server-side field list, keeping the human default compact.
+
+    ``full_view_sentinel``, when given, is returned verbatim for a full view
+    with no explicit fields, instead of omitting the parameter. Some
+    endpoints (e.g. ``search/jql``) return no fields at all when ``fields``
+    is omitted, unlike the single-issue read endpoint, whose own default
+    already is the full field set.
+    """
 
     view = validate_view(view)
     selected = parse_csv(fields, label="--fields")
@@ -61,6 +69,8 @@ def jira_fields_parameter(
             if field not in selected:
                 selected.append(field)
         return ",".join(selected)
+    if view == "full" and full_view_sentinel:
+        return full_view_sentinel
     # Jira's normal default supplies the full field set. Do not turn a full
     # view into a restrictive list merely because an include was supplied.
     return None
