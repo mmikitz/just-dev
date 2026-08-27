@@ -56,10 +56,31 @@ split out from `update-jira-issue` for the same reason.
 
 ## U3 — No per-recipe `--help`
 
-**Status:** deferred because it is the most invasive change in scope — it
-touches the signature of every Jira recipe, not just adapter/workflow code.
+**Status: won't fix (resolved 2026-08-27).** `just --list <namespace>` (e.g.
+`just --list jira`) is the supported discovery path for a recipe's flags;
+`just <recipe> --help` is not going to be made to work. Rationale below,
+kept alongside the original analysis for context.
 
-**The problem:** `just read-jira-issue --help` fails with
+**Why won't-fix:** every recipe body in `scripts/devtools/recipes/*.just` is
+today a trivial one-liner that delegates entirely to the Python CLI — none
+of the ~25 recipes across `jira.just`, `bitbucket.just`, `jenkins.just`, and
+`confluence.just` contain any shell logic. The mechanical fix below would
+introduce the first branching shebang script into that layer, repeated
+across every recipe, and would also require making each recipe's leading
+positional argument optional so `just <recipe> --help` doesn't also demand
+its normal required input — pushing a validation responsibility from
+`just`'s own parser onto the Python CLI, with its own test coverage per
+recipe. That's a real style break for a benefit `just --list <namespace>`
+already provides today with zero code changes. `UX-DESIGN-PRINCIPLES.md`'s
+principles don't require per-recipe `--help` specifically — principle 1
+("self-describing `--help`") is satisfied by the Typer CLI's own `--help`,
+which already works once a command is actually invoked; the gap is purely
+`just`'s recipe-level flag parsing, and `--list` covers that discovery need
+without touching recipe signatures at all.
+
+**Original problem description (for context):**
+
+`just read-jira-issue --help` fails with
 `error: recipe 'read-jira-issue' does not have option '--help'` — `just`'s
 own argument parser rejects the flag before the Python CLI (which *does*
 support `--help` via Typer) ever runs. This affects all 7 recipes in
@@ -105,9 +126,7 @@ in `cli.py`. Making `--help` work means:
    exits 0 and prints the recipe's Typer help text, for at least one
    recipe per integration.
 
-**Alternative worth considering** before doing the full mechanical change:
-a single `just <namespace>::<recipe> --help`-style shim recipe, or
-documenting `just --list jira` / triggering a validation error on purpose
-as the supported discovery paths (both already work per the QA report) and
-closing this as "won't fix, use `--list`". That's a product call, not an
-engineering one — flagging it here rather than deciding it unilaterally.
+**Alternative considered and adopted:** documenting `just --list jira` (and
+the other namespaces) as the supported discovery path instead — it already
+works per the QA report, requires no code change, and doesn't touch any
+recipe signature. See the resolution at the top of this section.
