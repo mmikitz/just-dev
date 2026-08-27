@@ -6,7 +6,13 @@ from requests.exceptions import RequestException, Timeout
 
 import just_dev.adapters as adapters
 from just_dev.adapters import BitbucketAdapter, ConfluenceAdapter, JenkinsAdapter, JiraAdapter
-from just_dev.errors import AuthenticationError, ConflictError, NetworkError, PermissionDeniedError
+from just_dev.errors import (
+    AuthenticationError,
+    ConflictError,
+    InputValidationError,
+    NetworkError,
+    PermissionDeniedError,
+)
 from just_dev.models import BitbucketSettings, ConfluencePreset, JenkinsPreset, JenkinsSettings
 
 
@@ -514,6 +520,40 @@ def test_sdk_http_status_maps_to_a_stable_error_category(status_code, expected_e
     with pytest.raises(expected_error) as raised:
         JiraAdapter("cloud", lambda token: FailingJira()).read_issue("secret", "DEV-1", {})
 
+    assert "secret" not in str(raised.value)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known gap from exploratory testing (report F1): _sdk_error/_exception_status reads only the "
+        "HTTP status, never the response body, so a 400 with Jira's own field-level errors (e.g. "
+        "'summary too long', 'assignee accountId required') collapses into the same bare "
+        "'Remote service rejected the request (400).' as every other 4xx. This characterizes the "
+        "desired outcome -- once a fix (being developed on a separate branch) selectively surfaces "
+        "Jira's errorMessages/errors map (staying as token-safe as the existing redaction elsewhere in "
+        "this module), this test starts passing and strict=True will flag it for un-xfailing."
+    ),
+)
+def test_sdk_bad_request_surfaces_jiras_field_level_error_detail_not_just_the_status() -> None:
+    class _FakeValidationResponse(_FakeHttpResponse):
+        def __init__(self) -> None:
+            super().__init__(400)
+
+        def json(self) -> dict:
+            return {"errorMessages": [], "errors": {"summary": "The summary is too long."}}
+
+    class FailingJira:
+        def resource_url(self, *args, **kwargs):
+            return "rest/api/3/issue"
+
+        def post(self, *args, **kwargs):
+            raise RequestException("token=secret status=400", response=_FakeValidationResponse())
+
+    with pytest.raises(InputValidationError) as raised:
+        JiraAdapter("cloud", lambda token: FailingJira()).create_issue("secret", {"fields": {}})
+
+    assert "too long" in str(raised.value)
     assert "secret" not in str(raised.value)
 
 
