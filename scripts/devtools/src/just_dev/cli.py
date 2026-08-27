@@ -19,8 +19,10 @@ from .errors import AuthenticationError, DevtoolsError, InputValidationError
 from .introspect import describe_commands as _describe_commands
 from .jira import (
     parse_includes,
+    prepare_attach_view,
     prepare_issue_view,
     prepare_search_view,
+    render_attach_markdown,
     render_issue_markdown,
     render_search_markdown,
     validate_view,
@@ -786,9 +788,9 @@ def attach_jira_issue(
     """Attach a local file to a Jira issue."""
 
     _set_command_output_options(context, output_format, safe)
-    _execute(
-        context,
-        lambda: (
+
+    def action() -> dict[str, Any] | PreviewResult:
+        result = (
             _runtime(context)
             .service(profile)
             .attach_jira_issue(
@@ -798,7 +800,14 @@ def attach_jira_issue(
                 yes=_yes_or_environment(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
-        ),
+        )
+        return prepare_attach_view(result) if isinstance(result, dict) else result
+
+    _execute(
+        context,
+        action,
+        default_format="markdown",
+        markdown_renderer=render_attach_markdown,
     )
 
 

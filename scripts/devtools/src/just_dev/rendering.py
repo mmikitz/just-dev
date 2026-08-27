@@ -11,7 +11,7 @@ OMITTED = "[OMITTED]"
 _SAFE_KEY = re.compile(
     r"(?:account(?:id)?|email(?:address)?|displayname|avatar(?:urls?)?|"
     r"assignee|reporter|creator|author|user(?:s)?|identity|owner|watcher(?:s)?|voters?|"
-    r"url|uri|href|self|attachment(?:s)?|thumbnail|filename|mime(?:type)?)$",
+    r"url|uri|href|self|thumbnail|mime(?:type)?)$",
     re.IGNORECASE,
 )
 _URL_VALUE = re.compile(r"https?://\S+", re.IGNORECASE)

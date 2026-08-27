@@ -66,7 +66,35 @@ def test_safe_filter_removes_structural_personal_data_urls_and_attachment_metada
     assert "self" not in safe
     assert safe["fields"]["assignee"] == OMITTED
     assert safe["fields"]["reporter"] == OMITTED
-    assert safe["fields"]["attachment"] == OMITTED
+    # The attachment list itself is structural, not PII, and must survive so
+    # --include attachments --safe still shows something; only its nested
+    # PII/URL leaves (e.g. "content") are redacted in place.
+    assert safe["fields"]["attachment"] == [{"filename": "screen.png", "content": OMITTED}]
     assert safe["fields"]["comment"]["comments"][0]["author"] == OMITTED
     assert safe["fields"]["description"] == "Customer says the login button fails."
     assert "Customer says" in render(safe, "markdown")
+
+
+def test_safe_filter_keeps_attach_jira_issues_own_top_level_result_shape() -> None:
+    # attach-jira-issue's result uses "filename"/"attachments" as its own
+    # top-level keys, which happen to collide with the same names used as
+    # nested PII/bulk leaves elsewhere. --safe must still confirm the attach
+    # succeeded instead of reducing the result to just the issue key.
+    safe = filter_safe_output(
+        {
+            "issue_id_or_key": "DEV-1",
+            "filename": "notes.txt",
+            "attachments": [
+                {
+                    "id": "20001",
+                    "filename": "notes.txt",
+                    "author": {"displayName": "Ada", "accountId": "account-1"},
+                    "content": "https://example.atlassian.net/rest/api/3/attachment/content/20001",
+                }
+            ],
+        }
+    )
+
+    assert safe["issue_id_or_key"] == "DEV-1"
+    assert safe["filename"] == "notes.txt"
+    assert safe["attachments"] == [{"id": "20001", "filename": "notes.txt", "author": OMITTED, "content": OMITTED}]

@@ -48,8 +48,16 @@ def jira_fields_parameter(
     *,
     includes: Sequence[str] = (),
     view: str = "summary",
+    full_view_sentinel: str | None = None,
 ) -> str | None:
-    """Choose a server-side field list, keeping the human default compact."""
+    """Choose a server-side field list, keeping the human default compact.
+
+    ``full_view_sentinel``, when given, is returned verbatim for a full view
+    with no explicit fields, instead of omitting the parameter. Some
+    endpoints (e.g. ``search/jql``) return no fields at all when ``fields``
+    is omitted, unlike the single-issue read endpoint, whose own default
+    already is the full field set.
+    """
 
     view = validate_view(view)
     selected = parse_csv(fields, label="--fields")
@@ -61,6 +69,8 @@ def jira_fields_parameter(
             if field not in selected:
                 selected.append(field)
         return ",".join(selected)
+    if view == "full" and full_view_sentinel:
+        return full_view_sentinel
     # Jira's normal default supplies the full field set. Do not turn a full
     # view into a restrictive list merely because an include was supplied.
     return None
@@ -201,3 +211,40 @@ def _display_value(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+_ATTACHMENT_SUMMARY_FIELDS = ("id", "size")
+
+
+def prepare_attach_view(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Condense a raw Jira attach-file response to the fields that confirm success.
+
+    Jira's created-attachment objects carry the same nested author/avatar/URL
+    bulk that read-jira-issue already collapses for its own view; the useful
+    confirmation here is just which file landed on which issue.
+    """
+
+    result = {key: value[key] for key in ("issue_id_or_key", "filename") if key in value}
+    attachments = value.get("attachments")
+    if isinstance(attachments, list):
+        result["attachments"] = [
+            {key: item[key] for key in _ATTACHMENT_SUMMARY_FIELDS if key in item}
+            for item in attachments
+            if isinstance(item, Mapping)
+        ]
+    return result
+
+
+def render_attach_markdown(value: Any) -> str:
+    """A one-line Markdown confirmation for attach-jira-issue, instead of a raw API dump."""
+
+    if not isinstance(value, Mapping):
+        return render_markdown(value)
+    issue = value.get("issue_id_or_key")
+    filename = value.get("filename")
+    if not issue or not filename:
+        return render_markdown(value)
+    attachments = value.get("attachments")
+    size = attachments[0].get("size") if isinstance(attachments, list) and attachments else None
+    detail = f" ({size} bytes)" if size is not None else ""
+    return f"Attached **{filename}**{detail} to **{issue}**."
