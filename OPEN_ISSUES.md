@@ -31,6 +31,14 @@ Jira Cloud and found two open, unfixed defects:
   same collision silently empties `read-jira-issue --include attachments
   --safe` too. Fix: scope the redaction match to nested/leaf keys, or
   exempt these commands' own top-level result shape.
+- **U6 (medium) — `attach-jira-issue`'s default markdown/text output is a
+  raw API dump, the same U2 gap the original report found for
+  `read-jira-issue`.** With no `--format` given, a successful attach prints
+  the full Jira attachment object — nested `author` with four avatar sizes,
+  `self`/`content` URLs, `accountType`, `timeZone` — before the one line
+  that answers "did it work" (`filename`, `size`). Fix: give
+  `attach-jira-issue` a purpose-built one-line renderer, the way
+  `render_search_markdown` replaced the raw dump for search results.
 
 ## U3 — No per-recipe `--help`
 
