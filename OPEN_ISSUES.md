@@ -139,3 +139,35 @@ in `cli.py`. Making `--help` work means:
 the other namespaces) as the supported discovery path instead — it already
 works per the QA report, requires no code change, and doesn't touch any
 recipe signature. See the resolution at the top of this section.
+
+## Breaking changes from the MCP tool-contract review (F6, F8)
+
+**Status: fixed.** The MCP-compatibility review (`Should just-dev speak
+MCP?`, archived at `docs/jira-cli-exploratory-report.pdf` — its own
+F-numbered findings are a separate series from the QA report's F-numbers
+above) deliberately shipped only a mitigation for two findings because the
+real fix breaks the CLI surface, then priced the breaking change as a
+follow-up (`UX-DESIGN-PRINCIPLES.md` principles 22–23's "Do next" item).
+Both are now fixed as breaking changes:
+
+- **F8 — `--fields` meant two incompatible types across sibling
+  commands.** `create-jira-issue --fields` took a JSON object;
+  `read-jira-issue`/`search-jira-issues --fields` took a comma-separated
+  field list — an agent generalizing from one call to the next could send
+  a JSON object where Jira expects a CSV list and get a 4xx. Fixed by
+  renaming `create-jira-issue`'s flag to `--extra-fields`
+  (`JUST_DEV_JIRA_EXTRA_FIELDS` at the recipe layer). Migration:
+  `just create-jira-issue ... --fields '{...}'` now fails at `just`'s own
+  parser ("does not have option `--fields`"); replace with
+  `--extra-fields`.
+- **F6 — `JUST_DEV_YES=1` in the environment silently waived every
+  mutation's confirmation.** One `export` — plausible in an agent harness,
+  a CI shim, or a stray `.envrc` — removed the confirmation gate from all
+  mutations for the rest of the session, with nothing in the logged
+  command line to show it. Fixed by making consent argv-only: `--yes` has
+  no environment counterpart anymore. Migration: a `JUST_DEV_YES=1` export
+  now only prints a warning (`JUST_DEV_YES no longer waives confirmation;
+  pass --yes`) and the mutation fails closed (exit `26`) exactly like any
+  other unconfirmed one; pass `--yes` explicitly instead. Recipes still
+  accept `--yes` at the `just` layer and translate it into a literal
+  `--yes` argument.

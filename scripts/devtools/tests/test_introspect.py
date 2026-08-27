@@ -36,10 +36,13 @@ def test_jira_annotations_match_the_compatibility_analysis_table() -> None:
     }
 
 
-def test_fields_type_collision_is_resolved_per_command_not_globally() -> None:
-    """F8: --fields is a JSON object on create/update, a CSV field list on read/search."""
+def test_fields_type_collision_is_resolved_by_rename_not_just_declared() -> None:
+    """F8: create-jira-issue's object-valued flag is named --extra-fields, distinct
+    from read/search's comma-separated --fields, so no flag name carries two types."""
 
-    assert _tool("jira.create-jira-issue")["inputSchema"]["properties"]["fields"]["type"] == "object"
+    create_properties = _tool("jira.create-jira-issue")["inputSchema"]["properties"]
+    assert create_properties["extra_fields"]["type"] == "object"
+    assert "fields" not in create_properties
     assert _tool("jira.update-jira-issue")["inputSchema"]["properties"]["request"]["type"] == "object"
     assert _tool("jira.read-jira-issue")["inputSchema"]["properties"]["fields"]["type"] == "string"
     assert _tool("jira.search-jira-issues")["inputSchema"]["properties"]["fields"]["type"] == "string"

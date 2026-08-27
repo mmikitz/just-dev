@@ -69,13 +69,15 @@ _DEFAULT_ANNOTATIONS = {"readOnly": False, "destructive": True, "idempotent": Fa
 
 # Per-parameter JSON Schema overrides for shapes a param's Click type alone
 # can't express: a true enum (`--view`), a comma-separated finite vocabulary
-# (`--include`), and the one flag whose type genuinely differs between sibling
-# commands (F8: `--fields` is a JSON object on create/update, a comma-separated
-# field list on read/search — left as the default string type there, called
-# out via its own `help` text rather than silently declared as an array).
+# (`--include`), and the two object-valued flags (F8: `--extra-fields` on
+# create and `request` on update are both a JSON object merged into the Jira
+# request body; renaming create's former `--fields` off the name shared with
+# read/search's comma-separated field list is what resolved the collision,
+# not this override — this only declares the object shape Click's own type
+# inference can't).
 SCHEMA_OVERRIDES: dict[str, dict[str, dict[str, Any]]] = {
     "jira.create-jira-issue": {
-        "fields": {
+        "extra_fields": {
             "type": "object",
             "description": "Optional JSON object merged into 'fields', e.g. for custom fields.",
         },

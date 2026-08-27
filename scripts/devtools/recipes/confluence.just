@@ -8,12 +8,15 @@ import 'common.just'
 preview-release-notes $JUST_DEV_RELEASE_NOTES_FILE $JUST_DEV_CONFLUENCE_PRESET='release-notes' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev confluence preview-release-notes
 
+# YES is never exported: consent must be a real --yes argument on the just-dev command
+# line (F6, principle 23), so it is translated back into one via conditional interpolation
+# in the recipe body below.
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
 [arg('JUST_DEV_CONFLUENCE_PRESET', long='preset')]
 [arg('JUST_DEV_DRY_RUN', long='dry-run', value='1')]
-[arg('JUST_DEV_YES', long='yes', value='1')]
+[arg('YES', long='yes', value='1')]
 [arg('JUST_DEV_FORMAT', long='format')]
 [arg('JUST_DEV_SAFE', long='safe', value='1')]
-publish-release-notes $JUST_DEV_RELEASE_NOTES_FILE $JUST_DEV_CONFLUENCE_PRESET='release-notes' $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev confluence publish-release-notes
+publish-release-notes $JUST_DEV_RELEASE_NOTES_FILE $JUST_DEV_CONFLUENCE_PRESET='release-notes' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
+    @uv run --locked just-dev confluence publish-release-notes {{ if YES == '1' { '--yes' } else { '' } }}

@@ -333,27 +333,44 @@ the nine Jira commands didn't have one before this pass (their `--help`
 still worked — Typer falls back to each option's own `help=` — but a tool-
 list entry's `description` field would have been empty). One flag name must
 also mean one type across sibling commands: `--fields` used to be a JSON
-object on `create-jira-issue`/`update-jira-issue` and a comma-separated
-field list on `read-jira-issue`/`search-jira-issues`, indistinguishable from
-`--help` alone; `describe-commands`' per-command schema overrides make that
-collision explicit instead of implicit. `tests/test_introspect.py` pins the
-annotation table, the `--fields`/`--view` schema shapes, and that every Jira
-command's description is non-empty.
+object on `create-jira-issue` and a comma-separated field list on
+`read-jira-issue`/`search-jira-issues`, indistinguishable from `--help`
+alone — an agent generalizing from a create call to a read call would send
+a JSON object where Jira expects a CSV list and get a 4xx. That collision is
+now resolved by rename, not merely declared: `create-jira-issue`'s flag is
+`--extra-fields`, so no name carries two types anywhere in the namespace;
+`describe-commands`' schema override for it only supplies the object shape
+Click's own type inference can't express, the way `update-jira-issue`'s
+positional `request` already needed one. `tests/test_introspect.py` pins the
+annotation table, the schema shapes (including that `create-jira-issue` has
+no `fields` property at all), and that every Jira command's description is
+non-empty.
 
 ## 23. Consent is an argument, not an ambient setting (new in the MCP-compatibility pass)
 
 `JUST_DEV_*` environment variables exist to carry data into the CLI without
-shell interpolation (principle 7) — not to silently waive a safety check. A
-mutation confirmed via `JUST_DEV_YES=1` rather than an explicit `--yes` on
-the command line announces itself on stderr (`confirmation waived by
-JUST_DEV_YES`, from `_yes_or_environment` in `cli.py`) so the waiver has a
-trace even when it isn't in the invocation an operator or a log would show.
-Before this fix, one `export JUST_DEV_YES=1` — plausible in an agent
-harness, a CI shim, or a stray `.envrc` — removed the confirmation gate from
-every mutation for the rest of that shell session with zero trace anywhere
-in the output. `tests/test_cli.py::
-test_just_dev_yes_environment_variable_announces_the_waiver_on_stderr` and
-`::test_explicit_yes_does_not_announce_a_waiver` cover both paths.
+shell interpolation (principle 7) — not to silently waive a safety check.
+Unlike every other mutation flag, `--yes` has no environment counterpart:
+`_explicit_yes` in `cli.py` only ever returns `True` for a real `--yes`
+argument. A lingering `JUST_DEV_YES=1` earns a warning on stderr
+(`warning: JUST_DEV_YES no longer waives confirmation; pass --yes`) and then
+the mutation fails closed exactly as any unconfirmed one does
+(`ConfirmationError`, exit `26`) — the waiver path itself is gone, not just
+announced. Before this fix, one `export JUST_DEV_YES=1` — plausible in an
+agent harness, a CI shim, or a stray `.envrc` — removed the confirmation
+gate from every mutation for the rest of that shell session with zero trace
+anywhere in the output. Recipes still expose `--yes` at the `just` layer;
+`[arg('YES', long='yes', value='1')]` in each mutation recipe (`jira.just`,
+`bitbucket.just`, `confluence.just`, `jenkins.just`) is deliberately *not*
+`$`-exported, and the recipe body translates it back into a literal `--yes`
+argument via conditional interpolation
+(`{{ if YES == '1' { '--yes' } else { '' } }}`) — the only way to reconstruct
+an argv-only flag from a recipe that otherwise passes everything through
+env vars. `tests/test_cli.py::
+test_just_dev_yes_environment_variable_no_longer_waives_confirmation` and
+`::test_explicit_yes_wins_over_a_stale_just_dev_yes` cover the CLI layer;
+`tests/test_justfiles.py::test_yes_flag_reaches_argv_and_never_the_environment`
+covers the recipe layer for one mutation per module.
 
 ## 24. Cross-call state is an explicit argument (new in the MCP-compatibility pass)
 
@@ -377,11 +394,15 @@ session or a handshake this CLI has no process boundary to need.
 2. **`recipes/{service}.just`** — add (or extend) a recipe block:
    `[working-directory(devtools_root)]` + `[env('JUST_DEV_PROJECT_ROOT',
    project_root)]` + one `[arg('JUST_DEV_X', long='x', help='...')]` per flag
-   (including `--dry-run`/`--yes`/`--format`/`--safe` for a mutation, and
+   (including `--dry-run`/`--format`/`--safe` for a mutation, and
    `pattern='|a|b'` — with a leading empty alternative for the default empty
    value — for a true enum flag like `--view`), then a positional-env-var
    recipe signature that just calls `uv run --locked just-dev <module>
-   <command>`.
+   <command>`. `--yes` is the one flag that is never `$`-exported
+   (principle 23): declare it as `[arg('YES', long='yes', value='1')]`
+   (no `$` prefix on the parameter) and append
+   `{{ if YES == '1' { '--yes' } else { '' } }}` to the recipe body's
+   `just-dev` invocation, so consent reaches the CLI as a literal argument.
 3. **`justfile`** — add `alias <command> := <module>::<command>` so the flat
    and namespaced forms both exist (principle 8).
 4. **`src/just_dev/cli.py`** — a `@{service}_app.command(...)` function with a
@@ -393,7 +414,7 @@ session or a handshake this CLI has no process boundary to need.
    CLI defaults of `None`), always ending `dry_run, yes, profile,
    output_format, safe` for a mutation. Call `_set_command_output_options`
    then `_execute(context, lambda: ...)`, with `announce=lambda preview:
-   _announce_preview(context, preview)` and `yes=_yes_or_environment(yes)`
+   _announce_preview(context, preview)` and `yes=_explicit_yes(yes)`
    for a mutation (principles 20, 23).
 5. **`src/just_dev/workflows.py`** (`DevtoolsService`) — validate inputs,
    build a `PreviewResult`, return it immediately if `dry_run` (before any
@@ -437,7 +458,7 @@ session or a handshake this CLI has no process boundary to need.
     `_announce_preview` so `--format json` stdout stays one document (20)?
     Does a structured `--format json` failure carry the same detail principle
     13 already extracts (21)? Does `describe-commands` need a schema override
-    or an `ANNOTATIONS` entry for this command (22)? Does a waived
-    confirmation announce itself when it didn't come from `--yes` on the
-    command line (23)? Does any new cross-call state travel as an explicit
+    or an `ANNOTATIONS` entry for this command (22)? Does `--yes` reach the
+    CLI only as a real command-line argument, with no `JUST_DEV_*`
+    environment fallback for consent (23)? Does any new cross-call state travel as an explicit
     argument rather than an implicit session (24)?

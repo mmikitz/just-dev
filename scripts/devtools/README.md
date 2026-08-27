@@ -191,7 +191,7 @@ just qa
 just check-changed
 just install-hooks
 just configure-auth | unlock-secrets | show-auth-status | lock-secrets
-just create-jira-issue bug "Summary" --description "Details" --fields '{"customfield_10010":"Prod"}'
+just create-jira-issue bug "Summary" --description "Details" --extra-fields '{"customfield_10010":"Prod"}'
 just read-jira-issue ABC-123 --fields summary,status
 just search-jira-issues 'assignee = currentUser() AND status != Done' --limit 20
 just update-jira-issue ABC-123 --summary "Updated summary" '{"notifyUsers":false}'
@@ -220,13 +220,17 @@ just verify-project | run-ci
 Mutating commands support `--dry-run` and `--yes`. Without `--yes`, the tool
 shows a preview and requires interactive confirmation. A mutation's preview
 is written to stderr, not stdout — `--format json`'s stdout always carries
-exactly one JSON document, the result. `--yes` can also come from the
-`JUST_DEV_YES=1` environment variable (as every recipe passes it through);
-when the confirmation is waived that way instead of by an explicit `--yes`
-on the command line, the CLI announces `confirmation waived by
-JUST_DEV_YES` on stderr so the waiver leaves a trace. Jira create presets
-control project, issue type, labels, and components; custom `--fields`
-cannot override those preset-managed fields.
+exactly one JSON document, the result. Unlike every other mutation flag,
+`--yes` has no environment counterpart: consent must be a real argument on
+the command line, never an ambient setting one `export` could apply to every
+mutation for a whole shell session. A recipe's own `--yes` flag is still
+translated into a literal `--yes` argument before it reaches the CLI. A
+lingering `JUST_DEV_YES=1` in the environment no longer waives anything; it
+only prints `warning: JUST_DEV_YES no longer waives confirmation; pass
+--yes` on stderr before the mutation fails closed the same way any
+unconfirmed one does (exit `26`). Jira create presets control project, issue
+type, labels, and components; custom `--extra-fields` cannot override those
+preset-managed fields.
 
 `assign-jira-issue --assignee` accepts either a Jira accountId or an email
 address; an email is resolved to an accountId via Jira's user search, and the

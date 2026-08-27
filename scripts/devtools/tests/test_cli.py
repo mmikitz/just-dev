@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from just_dev.broker import KeePassProfile, ProfileStore
 from just_dev.cli import Runtime, _CiOperationClient, _LazyBroker, app
-from just_dev.errors import ConflictError, DevtoolsError
+from just_dev.errors import ConfirmationError, ConflictError, DevtoolsError
 from just_dev.models import PreviewResult
 
 
@@ -309,23 +309,9 @@ def test_confirmed_mutation_puts_exactly_one_json_document_on_stdout(monkeypatch
     assert preview == {"action": "create Jira issue", "details": {"preset": "bug", "summary": "Summary"}}
 
 
-def test_explicit_yes_does_not_announce_a_waiver(monkeypatch) -> None:
-    class FakeService:
-        def create_jira_issue(self, preset, summary, **kwargs):
-            kwargs["announce"](PreviewResult(action="create Jira issue", details={}))
-            return {"id": "10001", "key": "DEV-1"}
-
-    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
-
-    result = CliRunner().invoke(app, ["jira", "create-jira-issue", "bug", "Summary", "--yes"])
-
-    assert result.exit_code == 0, result.output
-    assert "confirmation waived" not in result.stderr
-
-
-def test_just_dev_yes_environment_variable_announces_the_waiver_on_stderr(monkeypatch) -> None:
-    """F6/principle 23: a mutation's confirmation waived by the JUST_DEV_YES
-    environment variable rather than an explicit --yes flag says so on stderr."""
+def test_explicit_yes_wins_over_a_stale_just_dev_yes(monkeypatch) -> None:
+    """principle 23: an explicit --yes on the command line needs no announcement,
+    even with a stale JUST_DEV_YES also set in the environment."""
 
     class FakeService:
         def create_jira_issue(self, preset, summary, **kwargs):
@@ -335,10 +321,33 @@ def test_just_dev_yes_environment_variable_announces_the_waiver_on_stderr(monkey
     monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
     monkeypatch.setenv("JUST_DEV_YES", "1")
 
-    result = CliRunner().invoke(app, ["jira", "create-jira-issue", "bug", "Summary"])
+    result = CliRunner().invoke(app, ["jira", "create-jira-issue", "bug", "Summary", "--yes"])
 
     assert result.exit_code == 0, result.output
-    assert "confirmation waived by JUST_DEV_YES" in result.stderr
+    assert "confirmation waived" not in result.stderr
+    assert "JUST_DEV_YES" not in result.stderr
+
+
+def test_just_dev_yes_environment_variable_no_longer_waives_confirmation(monkeypatch) -> None:
+    """F6/principle 23: consent is argv-only now. JUST_DEV_YES alone no longer
+    waives confirmation -- only an explicit --yes does -- and a lingering
+    JUST_DEV_YES earns a warning while the mutation still fails closed exactly
+    as an unconfirmed one always has (ConfirmationError, exit 26)."""
+
+    class FakeService:
+        def create_jira_issue(self, preset, summary, **kwargs):
+            if not kwargs["yes"]:
+                raise ConfirmationError("Refusing to create the Jira issue without --yes because stdin is not a TTY.")
+            kwargs["announce"](PreviewResult(action="create Jira issue", details={}))
+            return {"id": "10001", "key": "DEV-1"}
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+    monkeypatch.setenv("JUST_DEV_YES", "1")
+
+    result = CliRunner().invoke(app, ["jira", "create-jira-issue", "bug", "Summary"])
+
+    assert result.exit_code == 26, result.output
+    assert "warning: JUST_DEV_YES no longer waives confirmation; pass --yes" in result.stderr
 
 
 def test_describe_commands_lists_every_command_as_an_mcp_shaped_tool(monkeypatch) -> None:
@@ -352,7 +361,8 @@ def test_describe_commands_lists_every_command_as_an_mcp_shaped_tool(monkeypatch
     assert read_issue["annotations"] == {"readOnly": True, "destructive": False, "idempotent": True}
     assert "issue_id_or_key" in read_issue["inputSchema"]["properties"]
     assert read_issue["outputSchema"]["properties"]["fields"] == {"type": "object"}
-    assert tools["jira.create-jira-issue"]["inputSchema"]["properties"]["fields"]["type"] == "object"
+    assert tools["jira.create-jira-issue"]["inputSchema"]["properties"]["extra_fields"]["type"] == "object"
+    assert "fields" not in tools["jira.create-jira-issue"]["inputSchema"]["properties"]
 
 
 def test_jira_read_defaults_to_markdown_and_applies_view_and_safe_output(monkeypatch) -> None:
