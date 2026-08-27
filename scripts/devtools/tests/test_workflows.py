@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 
 import pytest
@@ -27,6 +28,8 @@ class FakeBroker:
             return {"issue_id_or_key": payload["issue_id_or_key"], "assignee": payload["assignee"]}
         if operation == "jira.comment_issue":
             return {"id": "10050", "issue_id_or_key": payload["issue_id_or_key"]}
+        if operation == "jira.attach_file":
+            return {"issue_id_or_key": payload["issue_id_or_key"], "filename": payload["filename"]}
         if operation == "jira.list_transitions":
             return {
                 "transitions": [
@@ -273,6 +276,60 @@ def test_comment_jira_issue_rejects_empty_comment(config, tmp_path) -> None:
     with pytest.raises(InputValidationError):
         service.comment_jira_issue("DEV-1", "  ")
 
+    assert broker.calls == []
+
+
+def test_attach_jira_issue_forwards_file_contents_as_base64(config, tmp_path) -> None:
+    broker = FakeBroker()
+    announced: list[PreviewResult] = []
+    service = DevtoolsService(config, tmp_path, broker)
+    file_path = tmp_path / "notes.txt"
+    file_path.write_bytes(b"hello world")
+
+    result = service.attach_jira_issue("DEV-1", str(file_path), yes=True, announce=announced.append)
+
+    assert result["issue_id_or_key"] == "DEV-1"
+    assert announced[0].details["filename"] == "notes.txt"
+    assert announced[0].details["size_bytes"] == 11
+    assert broker.calls[0][0] == "jira.attach_file"
+    assert broker.calls[0][1]["filename"] == "notes.txt"
+    assert base64.b64decode(broker.calls[0][1]["content_b64"]) == b"hello world"
+
+
+def test_attach_jira_issue_rejects_a_missing_file(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.attach_jira_issue("DEV-1", str(tmp_path / "does-not-exist.txt"))
+
+    assert broker.calls == []
+
+
+def test_attach_jira_issue_rejects_a_file_over_the_size_limit(config, tmp_path, monkeypatch) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+    monkeypatch.setattr(DevtoolsService, "_JIRA_MAX_ATTACHMENT_BYTES", 4)
+    file_path = tmp_path / "big.bin"
+    file_path.write_bytes(b"too big")
+
+    with pytest.raises(InputValidationError):
+        service.attach_jira_issue("DEV-1", str(file_path))
+
+    assert broker.calls == []
+
+
+def test_attach_jira_issue_dry_run_short_circuits_before_reading_the_file(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+    file_path = tmp_path / "notes.txt"
+    file_path.write_bytes(b"hello world")
+
+    result = service.attach_jira_issue("DEV-1", str(file_path), dry_run=True)
+
+    assert isinstance(result, PreviewResult)
+    assert result.details["filename"] == "notes.txt"
+    assert "content_b64" not in result.details
     assert broker.calls == []
 
 

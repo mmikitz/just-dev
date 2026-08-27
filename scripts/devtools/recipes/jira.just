@@ -62,6 +62,15 @@ comment-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_COMMENT $JUST_D
 [arg('JUST_DEV_YES', long='yes', value='1')]
 [arg('JUST_DEV_FORMAT', long='format')]
 [arg('JUST_DEV_SAFE', long='safe', value='1')]
+attach-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_FILE_PATH $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
+    @uv run --locked just-dev jira attach-jira-issue
+
+[working-directory(devtools_root)]
+[env('JUST_DEV_PROJECT_ROOT', project_root)]
+[arg('JUST_DEV_DRY_RUN', long='dry-run', value='1')]
+[arg('JUST_DEV_YES', long='yes', value='1')]
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
 transition-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_STATUS $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev jira transition-jira-issue
 

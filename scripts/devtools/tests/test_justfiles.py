@@ -28,6 +28,7 @@ ALIASES = (
     "update-jira-issue",
     "assign-jira-issue",
     "comment-jira-issue",
+    "attach-jira-issue",
     "transition-jira-issue",
     "delete-jira-issue",
     "jira-integration-smoke",
@@ -93,6 +94,14 @@ RECIPES: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], tuple[str,
         ("ABC-123", "Looks good to me"),
         ("JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "JUST_DEV_JIRA_COMMENT"),
         ("jira", "comment-jira-issue"),
+    ),
+    (
+        "attach-jira-issue",
+        "jira",
+        "attach-jira-issue",
+        ("ABC-123", "./screenshot.png"),
+        ("JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "JUST_DEV_JIRA_FILE_PATH"),
+        ("jira", "attach-jira-issue"),
     ),
     (
         "transition-jira-issue",
@@ -240,6 +249,7 @@ def test_jira_recipe_exposes_only_the_requested_targets() -> None:
         "update-jira-issue",
         "assign-jira-issue",
         "comment-jira-issue",
+        "attach-jira-issue",
         "transition-jira-issue",
         "delete-jira-issue",
         "jira-integration-smoke",
@@ -420,8 +430,9 @@ def _run_just(*args: str) -> subprocess.CompletedProcess:
         (("transition-jira-issue", "DEV-1"), 2),
         (("create-jira-issue",), 2),
         (("comment-jira-issue", "DEV-1"), 2),
+        (("attach-jira-issue", "DEV-1"), 2),
     ],
-    ids=["transition-zero-args", "transition-one-arg", "create-zero-args", "comment-one-arg"],
+    ids=["transition-zero-args", "transition-one-arg", "create-zero-args", "comment-one-arg", "attach-one-arg"],
 )
 def test_missing_positional_arguments_produce_justs_own_usage_error(args, takes) -> None:
     completed = _run_just(*args)

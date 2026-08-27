@@ -216,6 +216,41 @@ verify_commands = ["true"]
     assert "transition Jira issue" in result.output
 
 
+def test_attach_jira_issue_dry_run_needs_no_broker(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "project.toml"
+    config_path.write_text(
+        """
+[atlassian]
+cloud_id = "00000000-0000-4000-8000-000000000123"
+[jira]
+[bitbucket]
+workspace = "w"
+repository = "r"
+username = "u"
+[jenkins]
+url = "https://jenkins.example.test"
+username = "u"
+[confluence]
+[project]
+starter_hook = false
+verify_commands = ["true"]
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JUST_DEV_PROJECT_ROOT", str(tmp_path))
+    attachment = tmp_path / "screenshot.png"
+    attachment.write_bytes(b"fake image bytes")
+
+    result = CliRunner().invoke(
+        app,
+        ["--config", str(config_path), "jira", "attach-jira-issue", "ABC-123", str(attachment), "--dry-run"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "attach file to Jira issue" in result.output
+    assert "screenshot.png" in result.output
+
+
 def test_merge_pull_request_dry_run_needs_no_broker(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "project.toml"
     config_path.write_text(

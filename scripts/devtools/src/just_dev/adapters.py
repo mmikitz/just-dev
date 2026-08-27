@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import re
 from collections.abc import Callable, Mapping, Sequence
 from functools import wraps
+from io import BytesIO
 from typing import Any, Protocol, TypeVar
 from urllib.parse import quote
 
@@ -45,6 +47,8 @@ class JiraClient(Protocol):
     def delete(self, path: str, *, params: dict[str, Any] | None = None) -> Any: ...
 
     def user_find_by_user_string(self, *, query: str) -> Any: ...
+
+    def add_attachment_object(self, issue_key: str, attachment: Any) -> Any: ...
 
 
 class BitbucketClient(Protocol):
@@ -322,6 +326,19 @@ class JiraAdapter:
         return dict(
             _mapping(client.post(f"{self._issue_path(client, issue_id_or_key)}/comment", data=dict(request)), "Jira")
         )
+
+    @_sdk_errors("Jira")
+    def attach_file(self, token: str, issue_id_or_key: str, filename: str, content_b64: str) -> dict[str, Any]:
+        client = self._client(token)
+        attachment = BytesIO(base64.b64decode(content_b64))
+        attachment.name = filename
+        response = client.add_attachment_object(issue_id_or_key, attachment)
+        fallback = {"issue_id_or_key": issue_id_or_key, "filename": filename}
+        # Jira's attachments endpoint returns a JSON array of the created attachment(s), not an
+        # object, unlike every other issue-mutation endpoint this adapter wraps.
+        if isinstance(response, list):
+            return {**fallback, "attachments": response}
+        return self._completed_response(response, fallback)
 
     @_sdk_errors("Jira")
     def list_transitions(self, token: str, issue_id_or_key: str) -> dict[str, Any]:

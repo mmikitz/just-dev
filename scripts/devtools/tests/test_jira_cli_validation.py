@@ -115,6 +115,19 @@ def test_comment_jira_issue_refuses_without_yes_when_stdin_is_not_a_tty(tmp_path
     assert "--yes" in result.output
 
 
+def test_attach_jira_issue_refuses_without_yes_when_stdin_is_not_a_tty(tmp_path, monkeypatch) -> None:
+    config_path = _config_path(tmp_path, monkeypatch)
+    attachment = tmp_path / "notes.txt"
+    attachment.write_text("hello", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["--config", str(config_path), "jira", "attach-jira-issue", "DEV-1", str(attachment)]
+    )
+
+    assert result.exit_code == 26, result.output
+    assert "--yes" in result.output
+
+
 def test_delete_jira_issue_refuses_without_yes_when_stdin_is_not_a_tty(tmp_path, monkeypatch) -> None:
     config_path = _config_path(tmp_path, monkeypatch)
 
