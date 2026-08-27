@@ -1,7 +1,8 @@
 # Open issues
 
 Deferred findings from the Jira CLI exploratory QA report (see the
-`claude/jira-cli-exploratory-execution-8q55i5` branch report). Both were
+`claude/jira-cli-exploratory-execution-8q55i5` branch report, archived at
+`docs/jira-cli-exploratory-report.pdf`). Both were
 explicitly scoped out of the fix pass on `claude/project-review-fixes-mif32d`
 because they are feature work or a recipe-syntax-level change, not bug fixes.
 Everything else from that report (F1, F2, F3, F6, R4, R5, U2, F5) has been
