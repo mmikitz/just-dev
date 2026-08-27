@@ -115,6 +115,11 @@ def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mappin
                 str(payload["issue_id_or_key"]),
                 _request_object(payload, "parameters"),
             )
+        elif operation == "jira.search_issues":
+            result = JiraAdapter(config.atlassian.cloud_id).search_issues(
+                _token(tokens, "jira", ci=ci),
+                _request_object(payload, "parameters"),
+            )
         elif operation == "jira.update_issue":
             result = JiraAdapter(config.atlassian.cloud_id).update_issue(
                 _token(tokens, "jira", ci=ci),

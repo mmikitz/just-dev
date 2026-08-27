@@ -293,6 +293,40 @@ class DevtoolsService:
             ),
         )
 
+    def search_jira_issues(
+        self,
+        jql: str,
+        *,
+        fields: str | None = None,
+        view: str = "summary",
+        limit: int | None = None,
+        next_page_token: str | None = None,
+        expand: str | None = None,
+    ) -> dict[str, Any]:
+        self._validate_atlassian()
+        jql = jql.strip()
+        if not jql:
+            raise InputValidationError("JQL must not be empty.")
+        view = validate_view(view)
+        if limit is not None and not 1 <= limit <= 100:
+            raise InputValidationError("--limit must be between 1 and 100.")
+        fields_parameter = jira_fields_parameter(fields, view=view)
+        parameters = {
+            key: value
+            for key, value in (
+                ("jql", jql),
+                ("fields", fields_parameter),
+                ("maxResults", limit),
+                ("nextPageToken", next_page_token),
+                ("expand", expand),
+            )
+            if value
+        }
+        return self.broker.invoke(
+            "jira.search_issues",
+            self._payload(require_atlassian=True, parameters=parameters),
+        )
+
     def update_jira_issue(
         self,
         issue_id_or_key: str,

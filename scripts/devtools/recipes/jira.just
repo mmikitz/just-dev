@@ -26,6 +26,18 @@ read-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_READ_FIELDS='' $JU
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
+[arg('JUST_DEV_JIRA_SEARCH_FIELDS', long='fields')]
+[arg('JUST_DEV_JIRA_SEARCH_VIEW', long='view')]
+[arg('JUST_DEV_JIRA_SEARCH_LIMIT', long='limit')]
+[arg('JUST_DEV_JIRA_SEARCH_NEXT_PAGE_TOKEN', long='next-page-token')]
+[arg('JUST_DEV_JIRA_SEARCH_EXPAND', long='expand')]
+[arg('JUST_DEV_FORMAT', long='format')]
+[arg('JUST_DEV_SAFE', long='safe', value='1')]
+search-jira-issues $JUST_DEV_JIRA_SEARCH_JQL $JUST_DEV_JIRA_SEARCH_FIELDS='' $JUST_DEV_JIRA_SEARCH_VIEW='' $JUST_DEV_JIRA_SEARCH_LIMIT='' $JUST_DEV_JIRA_SEARCH_NEXT_PAGE_TOKEN='' $JUST_DEV_JIRA_SEARCH_EXPAND='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
+    @uv run --locked just-dev jira search-jira-issues
+
+[working-directory(devtools_root)]
+[env('JUST_DEV_PROJECT_ROOT', project_root)]
 [arg('JUST_DEV_JIRA_SUMMARY', long='summary')]
 [arg('JUST_DEV_JIRA_DESCRIPTION', long='description')]
 [arg('JUST_DEV_JIRA_LABELS', long='labels')]

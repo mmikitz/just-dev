@@ -22,6 +22,10 @@ class FakeJiraAdapter:
         self.calls.append(("read", self.cloud_id, token, issue_id_or_key, parameters))
         return {"key": issue_id_or_key, "parameters": parameters}
 
+    def search_issues(self, token: str, parameters: dict) -> dict:
+        self.calls.append(("search", self.cloud_id, token, parameters))
+        return {"issues": [], "parameters": parameters}
+
     def update_issue(self, token: str, issue_id_or_key: str, request: dict) -> dict:
         self.calls.append(("update", self.cloud_id, token, issue_id_or_key, request))
         return {"key": issue_id_or_key, "request": request}
@@ -154,6 +158,35 @@ def test_jira_crud_operations_forward_complete_request_objects(config, monkeypat
     assert update["request"]["notifyUsers"] is False
     assert delete["parameters"] == {"deleteSubtasks": True}
     assert [call[0] for call in FakeJiraAdapter.calls] == ["create", "read", "update", "delete"]
+
+
+def test_jira_search_issues_operation_forwards_parameters_to_the_adapter(config, monkeypatch) -> None:
+    FakeJiraAdapter.calls = []
+    monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
+    payload = {
+        "config": config.model_dump(mode="json"),
+        "parameters": {"jql": "project = DEV", "fields": "summary,status", "maxResults": 25},
+    }
+
+    result = execute_operation({"jira": "jira-secret"}, "jira.search_issues", payload)
+
+    assert result["parameters"] == payload["parameters"]
+    assert FakeJiraAdapter.calls == [("search", config.atlassian.cloud_id, "jira-secret", payload["parameters"])]
+
+
+def test_jira_search_issues_operation_forwards_parameters_using_a_ci_token(config, monkeypatch) -> None:
+    FakeJiraAdapter.calls = []
+    monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
+    payload = {
+        "config": config.model_dump(mode="json"),
+        "parameters": {"jql": "project = DEV"},
+        "__just_dev_ci": True,
+    }
+
+    result = execute_operation({"jira": "ci-secret"}, "jira.search_issues", payload)
+
+    assert result["parameters"] == {"jql": "project = DEV"}
+    assert FakeJiraAdapter.calls == [("search", config.atlassian.cloud_id, "ci-secret", {"jql": "project = DEV"})]
 
 
 def test_jira_assign_comment_attach_and_transition_operations_forward_to_the_adapter(config, monkeypatch) -> None:
@@ -365,3 +398,14 @@ def test_missing_local_and_ci_tokens_explain_the_respective_recovery_path(config
 
     with pytest.raises(AuthenticationError, match="JUST_DEV_CI_JIRA_TOKEN"):
         execute_operation({}, "jira.read_issue", {**payload, "__just_dev_ci": True})
+
+
+def test_search_jira_issues_missing_local_and_ci_tokens_explain_the_respective_recovery_path(config) -> None:
+    payload = {"config": config.model_dump(mode="json"), "parameters": {"jql": "project = DEV"}}
+
+    with pytest.raises(AuthenticationError, match=r"configure-auth --entry jira=KEEPASS_ENTRY_UUID") as local:
+        execute_operation({}, "jira.search_issues", payload)
+    assert "unlock-secrets" in str(local.value)
+
+    with pytest.raises(AuthenticationError, match="JUST_DEV_CI_JIRA_TOKEN"):
+        execute_operation({}, "jira.search_issues", {**payload, "__just_dev_ci": True})

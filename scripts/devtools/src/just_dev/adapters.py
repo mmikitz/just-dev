@@ -273,6 +273,16 @@ class JiraAdapter:
         )
 
     @_sdk_errors("Jira")
+    def search_issues(self, token: str, parameters: Mapping[str, Any]) -> dict[str, Any]:
+        client = self._client(token)
+        return dict(
+            _mapping(
+                client.get(client.resource_url("search/jql"), params=dict(parameters) or None),
+                "Jira",
+            )
+        )
+
+    @_sdk_errors("Jira")
     def update_issue(self, token: str, issue_id_or_key: str, request: Mapping[str, Any]) -> dict[str, Any]:
         client = self._client(token)
         body = dict(request)

@@ -137,6 +137,25 @@ just read-jira-issue FUTUREAERO-20 --include comments,links --view summary --for
 just read-jira-issue FUTUREAERO-20 --view full --format json --safe
 ```
 
+Search for issues by JQL instead of a single key with `search-jira-issues`:
+
+```text
+just search-jira-issues JQL \
+  [--fields LIST] [--view summary|full] [--limit N] \
+  [--next-page-token TOKEN] [--expand LIST] [--format text|markdown|json] [--safe]
+```
+
+It shares the same field/view selection as `read-jira-issue`, but has no
+`--include`: bulky per-issue sections (comments, attachments) don't belong in
+a multi-issue list. `--limit` (1-100) maps to `maxResults`; use the returned
+`nextPageToken` to fetch the next page.
+
+```text
+just search-jira-issues 'project = FUTUREAERO AND status = "In Progress"'
+just search-jira-issues 'assignee = currentUser()' --fields summary,status --limit 20
+just search-jira-issues 'project = FUTUREAERO' --view full --format json --safe
+```
+
 All public result recipes accept `--format text|markdown|json` and `--safe`.
 Safe output structurally omits identity/account fields, URLs, and attachment
 metadata. It cannot reliably classify personal information embedded in free
@@ -155,6 +174,7 @@ just install-hooks
 just configure-auth | unlock-secrets | show-auth-status | lock-secrets
 just create-jira-issue bug "Summary" --description "Details" --fields '{"customfield_10010":"Prod"}'
 just read-jira-issue ABC-123 --fields summary,status
+just search-jira-issues 'assignee = currentUser() AND status != Done' --limit 20
 just update-jira-issue ABC-123 --summary "Updated summary" '{"notifyUsers":false}'
 just update-jira-issue ABC-123 --labels "bug,urgent" --priority High
 just update-jira-issue ABC-123 '{"update":{"issuelinks":[{"add":{"type":{"name":"Relates"},"outwardIssue":{"key":"ABC-124"}}}]}}'

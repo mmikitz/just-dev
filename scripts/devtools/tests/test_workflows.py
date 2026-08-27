@@ -20,6 +20,8 @@ class FakeBroker:
             return {"key": "DEV-1", "id": "10001", "self": "https://jira/DEV-1"}
         if operation == "jira.read_issue":
             return {"key": payload["issue_id_or_key"], "fields": {"summary": "Existing"}}
+        if operation == "jira.search_issues":
+            return {"issues": [{"key": "DEV-1", "fields": {"summary": "Existing"}}], "isLast": True}
         if operation == "jira.update_issue":
             return {"issue_id_or_key": payload["issue_id_or_key"], "updated": True}
         if operation == "jira.delete_issue":
@@ -135,6 +137,51 @@ def test_jira_read_update_and_delete_forward_all_request_values(config, tmp_path
     assert broker.calls[1][1]["summary"] == "Updated summary"
     assert broker.calls[1][1]["request"] == {"customfield_10001": "value"}
     assert broker.calls[2][1]["parameters"] == {"deleteSubtasks": True}
+
+
+def test_search_jira_issues_forwards_jql_fields_view_limit_and_pagination(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.search_jira_issues(
+        "project = DEV",
+        fields="summary,status",
+        view="full",
+        limit=25,
+        next_page_token="CAEaAggD",
+        expand="names",
+    )
+
+    assert result["issues"][0]["key"] == "DEV-1"
+    assert broker.calls[0][0] == "jira.search_issues"
+    assert broker.calls[0][1]["parameters"] == {
+        "jql": "project = DEV",
+        "fields": "summary,status",
+        "maxResults": 25,
+        "nextPageToken": "CAEaAggD",
+        "expand": "names",
+    }
+
+
+def test_search_jira_issues_rejects_an_empty_jql(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.search_jira_issues("   ")
+
+    assert broker.calls == []
+
+
+@pytest.mark.parametrize("limit", [0, -1, 101])
+def test_search_jira_issues_rejects_an_out_of_range_limit(config, tmp_path, limit) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.search_jira_issues("project = DEV", limit=limit)
+
+    assert broker.calls == []
 
 
 def test_jira_operation_uses_the_runtime_resolved_cloud_id_in_broker_payload(config, tmp_path) -> None:

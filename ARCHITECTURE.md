@@ -49,6 +49,7 @@ invoke the same recipe and remain supported.
 | `just lock-secrets` | `just auth lock-secrets` |
 | `just create-jira-issue PRESET SUMMARY` | `just jira create-jira-issue PRESET SUMMARY` |
 | `just read-jira-issue KEY` | `just jira read-jira-issue KEY` |
+| `just search-jira-issues JQL` | `just jira search-jira-issues JQL` |
 | `just update-jira-issue KEY [JSON]` | `just jira update-jira-issue KEY [JSON]` |
 | `just assign-jira-issue KEY --assignee ACCOUNT_ID` | `just jira assign-jira-issue KEY --assignee ACCOUNT_ID` |
 | `just comment-jira-issue KEY COMMENT` | `just jira comment-jira-issue KEY COMMENT` |
