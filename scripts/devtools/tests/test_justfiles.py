@@ -324,6 +324,46 @@ def test_special_characters_and_spaces_survive_without_shell_interpolation(just_
     assert captured["env"]["JUST_DEV_JIRA_SUMMARY"] == summary
 
 
+# F6/principle 23: --yes is never carried by an exported JUST_DEV_YES env var (unlike every
+# other mutation flag) -- one recipe per module, translated back into a literal --yes argv
+# entry by the recipe body's conditional interpolation.
+@requires_just
+@pytest.mark.parametrize(
+    ("alias", "args"),
+    [
+        ("create-jira-issue", ("bug", "Summary")),
+        ("merge-pull-request", ("42",)),
+        ("run-build", ("release",)),
+        ("publish-release-notes", ("notes.md",)),
+    ],
+    ids=["jira", "bitbucket", "jenkins", "confluence"],
+)
+def test_yes_flag_reaches_argv_and_never_the_environment(just_invocation, alias, args) -> None:
+    with_yes = just_invocation(alias, *args, "--yes")
+    without_yes = just_invocation(alias, *args)
+
+    assert with_yes["argv"][-1] == "--yes"
+    assert "JUST_DEV_YES" not in with_yes["env"]
+    assert without_yes["argv"][-1] != "--yes"
+    assert "JUST_DEV_YES" not in without_yes["env"]
+
+
+@requires_just
+def test_create_jira_issue_recipe_forwards_extra_fields_flag(just_invocation) -> None:
+    captured = just_invocation("create-jira-issue", "bug", "Summary", "--extra-fields", '{"customfield_10010":"Prod"}')
+
+    assert captured["env"]["JUST_DEV_JIRA_EXTRA_FIELDS"] == '{"customfield_10010":"Prod"}'
+
+
+@requires_just
+def test_create_jira_issue_rejects_the_old_fields_flag_name(just_invocation) -> None:
+    completed = _run_just("create-jira-issue", "bug", "Summary", "--fields", '{"a":1}')
+
+    assert completed.returncode != 0
+    assert "does not have option" in completed.stderr
+    assert "--fields" in completed.stderr
+
+
 @requires_just
 def test_configure_auth_recipe_forwards_incremental_and_repeated_options(just_invocation) -> None:
     database = "/tmp/credentials with spaces.kdbx"

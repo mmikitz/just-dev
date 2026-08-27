@@ -237,18 +237,19 @@ def _execute(
         raise typer.Exit(code=error.exit_code) from error
 
 
-def _yes_or_environment(yes: bool) -> bool:
-    """The --yes counterpart to `_flag_or_environment`: a waiver sourced from the
-    JUST_DEV_YES environment variable announces itself on stderr, since consent
-    is meant to be an explicit argument, not a silent ambient setting (F6,
-    principle 23). An explicit --yes needs no announcement."""
+def _explicit_yes(yes: bool) -> bool:
+    """Unlike every other mutation flag, --yes never has an environment
+    counterpart: consent must be a real argument on the command line, not an
+    ambient setting one `export` can apply to every mutation for a whole
+    session (F6, principle 23). A lingering JUST_DEV_YES no longer waives
+    anything; it only earns a warning before the mutation fails closed the
+    same way an unconfirmed one always has (ConfirmationError, exit 26)."""
 
     if yes:
         return True
-    waived = _flag_or_environment(False, "JUST_DEV_YES")
-    if waived:
-        typer.echo("confirmation waived by JUST_DEV_YES", err=True)
-    return waived
+    if _flag_or_environment(False, "JUST_DEV_YES"):
+        typer.echo("warning: JUST_DEV_YES no longer waives confirmation; pass --yes", err=True)
+    return False
 
 
 def _argument_or_environment(value: str | None, environment_name: str, label: str) -> str:
@@ -513,9 +514,9 @@ def create_jira_issue(
     description: Annotated[
         str | None, typer.Option("--description", help="Plain-text description, sent as Atlassian Document Format.")
     ] = None,
-    fields: Annotated[
+    extra_fields: Annotated[
         str | None,
-        typer.Option("--fields", help="Optional JSON object merged into 'fields', e.g. for custom fields."),
+        typer.Option("--extra-fields", help="Optional JSON object merged into 'fields', e.g. for custom fields."),
     ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
@@ -537,9 +538,9 @@ def create_jira_issue(
                 _argument_or_environment(preset, "JUST_DEV_JIRA_PRESET", "Jira preset"),
                 _argument_or_environment(summary, "JUST_DEV_JIRA_SUMMARY", "Jira summary"),
                 description=_optional_value_or_environment(description, "JUST_DEV_JIRA_DESCRIPTION"),
-                fields=_json_object_or_environment(fields, "JUST_DEV_JIRA_FIELDS", "Jira fields"),
+                fields=_json_object_or_environment(extra_fields, "JUST_DEV_JIRA_EXTRA_FIELDS", "Jira extra fields"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -699,7 +700,7 @@ def update_jira_issue(
                 priority=_optional_value_or_environment(priority, "JUST_DEV_JIRA_PRIORITY"),
                 fields=_json_object_or_environment(request, "JUST_DEV_JIRA_UPDATE_REQUEST", "Jira update request"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -733,7 +734,7 @@ def assign_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 _argument_or_environment(assignee, "JUST_DEV_JIRA_ASSIGNEE", "Assignee account ID or email"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -765,7 +766,7 @@ def comment_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 _argument_or_environment(comment, "JUST_DEV_JIRA_COMMENT", "Comment"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -797,7 +798,7 @@ def attach_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 _argument_or_environment(file_path, "JUST_DEV_JIRA_FILE_PATH", "File path"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         )
@@ -836,7 +837,7 @@ def transition_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 _argument_or_environment(status, "JUST_DEV_JIRA_STATUS", "Target status"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -870,7 +871,7 @@ def delete_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 delete_subtasks=_flag_or_environment(delete_subtasks, "JUST_DEV_JIRA_DELETE_SUBTASKS"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -910,7 +911,7 @@ def create_pull_request(
                 or ([os.environ["JUST_DEV_PR_REVIEWER"]] if os.environ.get("JUST_DEV_PR_REVIEWER") else []),
                 close_source_branch=_flag_or_environment(close_source_branch, "JUST_DEV_PR_CLOSE_SOURCE_BRANCH"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 no_verify=_flag_or_environment(no_verify, "JUST_DEV_NO_VERIFY"),
                 announce=lambda preview: _announce_preview(context, preview),
             )
@@ -954,7 +955,7 @@ def approve_pull_request(
             .approve_pull_request(
                 _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -982,7 +983,7 @@ def decline_pull_request(
             .decline_pull_request(
                 _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -1012,7 +1013,7 @@ def comment_pull_request(
                 _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
                 _argument_or_environment(comment, "JUST_DEV_PR_COMMENT", "Comment"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -1042,7 +1043,7 @@ def add_pull_request_reviewer(
                 _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
                 _argument_or_environment(reviewer, "JUST_DEV_PR_REVIEWER_NAME", "Reviewer"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -1082,7 +1083,7 @@ def merge_pull_request(
                 merge_strategy=_option_or_environment(merge_strategy, "JUST_DEV_PR_MERGE_STRATEGY", "merge_commit"),
                 close_source_branch=_flag_or_environment(close_source_branch, "JUST_DEV_PR_CLOSE_SOURCE_BRANCH"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -1115,7 +1116,7 @@ def run_build(
                 parameters=parameter
                 or ([os.environ["JUST_DEV_BUILD_PARAMETER"]] if os.environ.get("JUST_DEV_BUILD_PARAMETER") else []),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
         ),
@@ -1201,7 +1202,7 @@ def publish_release_notes(
                 path,
                 preset_name=_option_or_environment(preset, "JUST_DEV_CONFLUENCE_PRESET", "release-notes"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_yes_or_environment(yes),
+                yes=_explicit_yes(yes),
                 announce=lambda page: _announce_preview(context, page),
             )
         )

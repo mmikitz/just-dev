@@ -145,7 +145,9 @@ fields, URLs, and attachment metadata. It cannot perfectly classify PII in
 arbitrary free text such as descriptions or comments.
 
 Mutating commands retain `--dry-run` and `--yes`; without `--yes`, they show a
-preview and require a TTY confirmation. The broker remains narrowly scoped to a
+preview and require a TTY confirmation. `--yes` is argv-only — unlike every
+other mutation flag it has no environment counterpart, so consent can never
+travel as an ambient setting. The broker remains narrowly scoped to a
 hard allowlist in `execute_operation`, never an open passthrough: Jira
 supports create, read, update, and delete plus assign, comment, and
 transition; Bitbucket supports create and show plus approve, merge, decline,
