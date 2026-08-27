@@ -25,6 +25,7 @@ ALIASES = (
     "lock-secrets",
     "create-jira-issue",
     "read-jira-issue",
+    "search-jira-issues",
     "update-jira-issue",
     "assign-jira-issue",
     "comment-jira-issue",
@@ -70,6 +71,14 @@ RECIPES: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], tuple[str,
         ("ABC-123",),
         ("JUST_DEV_JIRA_ISSUE_ID_OR_KEY",),
         ("jira", "read-jira-issue"),
+    ),
+    (
+        "search-jira-issues",
+        "jira",
+        "search-jira-issues",
+        ("project = DEV",),
+        ("JUST_DEV_JIRA_SEARCH_JQL",),
+        ("jira", "search-jira-issues"),
     ),
     (
         "update-jira-issue",
@@ -246,6 +255,7 @@ def test_jira_recipe_exposes_only_the_requested_targets() -> None:
     assert targets == [
         "create-jira-issue",
         "read-jira-issue",
+        "search-jira-issues",
         "update-jira-issue",
         "assign-jira-issue",
         "comment-jira-issue",
@@ -354,6 +364,36 @@ def test_jira_read_recipe_forwards_view_include_and_output_flags(just_invocation
     assert captured["env"]["JUST_DEV_JIRA_READ_FIELDS"] == "summary,status"
     assert captured["env"]["JUST_DEV_JIRA_READ_INCLUDE"] == "comments,links"
     assert captured["env"]["JUST_DEV_JIRA_READ_VIEW"] == "full"
+    assert captured["env"]["JUST_DEV_FORMAT"] == "json"
+    assert captured["env"]["JUST_DEV_SAFE"] == "1"
+
+
+@requires_just
+def test_jira_search_recipe_forwards_fields_view_limit_pagination_and_output_flags(just_invocation) -> None:
+    captured = just_invocation(
+        "search-jira-issues",
+        "project = DEV",
+        "--fields",
+        "summary,status",
+        "--view",
+        "full",
+        "--limit",
+        "20",
+        "--next-page-token",
+        "CAEaAggD",
+        "--expand",
+        "names",
+        "--format",
+        "json",
+        "--safe",
+    )
+
+    assert captured["env"]["JUST_DEV_JIRA_SEARCH_JQL"] == "project = DEV"
+    assert captured["env"]["JUST_DEV_JIRA_SEARCH_FIELDS"] == "summary,status"
+    assert captured["env"]["JUST_DEV_JIRA_SEARCH_VIEW"] == "full"
+    assert captured["env"]["JUST_DEV_JIRA_SEARCH_LIMIT"] == "20"
+    assert captured["env"]["JUST_DEV_JIRA_SEARCH_NEXT_PAGE_TOKEN"] == "CAEaAggD"
+    assert captured["env"]["JUST_DEV_JIRA_SEARCH_EXPAND"] == "names"
     assert captured["env"]["JUST_DEV_FORMAT"] == "json"
     assert captured["env"]["JUST_DEV_SAFE"] == "1"
 

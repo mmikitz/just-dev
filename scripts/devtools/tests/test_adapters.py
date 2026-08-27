@@ -227,6 +227,36 @@ def test_jira_adapter_uses_atlassian_sdk_with_scoped_gateway(monkeypatch) -> Non
     assert client.delete_calls == [("rest/api/3/issue/DEV-1", {"deleteSubtasks": True})]
 
 
+def test_jira_adapter_search_issues_calls_the_enhanced_jql_search_endpoint(monkeypatch) -> None:
+    class FakeJiraSearch:
+        def __init__(self) -> None:
+            self.get_calls: list[tuple] = []
+
+        def resource_url(self, resource, api_root=None, api_version=None):
+            return f"rest/api/3/{resource}"
+
+        def get(self, path, *, params=None):
+            self.get_calls.append((path, params))
+            return {
+                "issues": [{"key": "DEV-1", "fields": {"summary": "A summary"}}],
+                "nextPageToken": "CAEaAggD",
+                "isLast": False,
+            }
+
+    client = FakeJiraSearch()
+    monkeypatch.setattr(adapters, "Jira", lambda *args, **kwargs: client)
+    adapter = JiraAdapter("cloud id")
+
+    result = adapter.search_issues("secret", {"jql": "project = DEV", "fields": "summary,status", "maxResults": 25})
+
+    assert result["issues"] == [{"key": "DEV-1", "fields": {"summary": "A summary"}}]
+    assert result["nextPageToken"] == "CAEaAggD"
+    assert result["isLast"] is False
+    assert client.get_calls == [
+        ("rest/api/3/search/jql", {"jql": "project = DEV", "fields": "summary,status", "maxResults": 25})
+    ]
+
+
 def test_jira_adapter_assigns_comments_lists_transitions_and_transitions_issue(monkeypatch) -> None:
     client = FakeJira()
     monkeypatch.setattr(adapters, "Jira", lambda *args, **kwargs: client)

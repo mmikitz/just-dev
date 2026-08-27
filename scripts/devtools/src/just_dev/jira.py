@@ -99,6 +99,56 @@ def prepare_issue_view(
     return result
 
 
+def prepare_search_view(
+    response: Mapping[str, Any],
+    *,
+    fields: str | None = None,
+    view: str = "summary",
+) -> dict[str, Any]:
+    """Apply the per-issue view policy to every issue in a Jira search response."""
+
+    view = validate_view(view)
+    issues = response.get("issues")
+    prepared_issues = (
+        [prepare_issue_view(issue, fields=fields, view=view) for issue in issues if isinstance(issue, Mapping)]
+        if isinstance(issues, list)
+        else []
+    )
+    result: dict[str, Any] = {"issues": prepared_issues}
+    for key in ("nextPageToken", "isLast", "total"):
+        if key in response:
+            result[key] = response[key]
+    return result
+
+
+def render_search_markdown(value: Any) -> str:
+    """A scannable one-line-per-issue Markdown list for search results."""
+
+    if not isinstance(value, Mapping):
+        return render_markdown(value)
+    issues = value.get("issues")
+    if not isinstance(issues, list):
+        return render_markdown(value)
+    if not issues:
+        lines = ["_No issues found._"]
+    else:
+        lines = [_search_issue_line(issue) for issue in issues if isinstance(issue, Mapping)]
+    next_page_token = value.get("nextPageToken")
+    if next_page_token:
+        lines.append(f"_Next page token: {next_page_token}_")
+    return "\n".join(lines)
+
+
+def _search_issue_line(issue: Mapping[str, Any]) -> str:
+    fields = issue.get("fields")
+    fields = fields if isinstance(fields, Mapping) else {}
+    key = _display_value(issue.get("key")) or "(no key)"
+    summary = _display_value(fields.get("summary")) or "(no summary)"
+    status = _display_value(fields.get("status")) or "Unknown"
+    assignee = _display_value(fields.get("assignee")) or "Unassigned"
+    return f"- **{key}**: {summary} — {status}, {assignee}"
+
+
 def render_issue_markdown(value: Any) -> str:
     """Give the normal Jira summary view an especially scannable Markdown form."""
 

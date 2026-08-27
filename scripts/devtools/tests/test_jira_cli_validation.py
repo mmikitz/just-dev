@@ -106,6 +106,28 @@ def test_read_jira_issue_rejects_an_unknown_view_value(tmp_path, monkeypatch) ->
     assert "--view" in result.output
 
 
+def test_search_jira_issues_rejects_an_unknown_view_value(tmp_path, monkeypatch) -> None:
+    config_path = _config_path(tmp_path, monkeypatch)
+
+    result = CliRunner().invoke(
+        app, ["--config", str(config_path), "jira", "search-jira-issues", "project = DEV", "--view", "bogus"]
+    )
+
+    assert result.exit_code == 25, result.output
+    assert "--view" in result.output
+
+
+def test_search_jira_issues_rejects_an_out_of_range_limit(tmp_path, monkeypatch) -> None:
+    config_path = _config_path(tmp_path, monkeypatch)
+
+    result = CliRunner().invoke(
+        app, ["--config", str(config_path), "jira", "search-jira-issues", "project = DEV", "--limit", "0"]
+    )
+
+    assert result.exit_code == 25, result.output
+    assert "--limit" in result.output
+
+
 def test_comment_jira_issue_refuses_without_yes_when_stdin_is_not_a_tty(tmp_path, monkeypatch) -> None:
     config_path = _config_path(tmp_path, monkeypatch)
 

@@ -16,7 +16,14 @@ from .atlassian import resolve_site_cloud_id
 from .broker import REQUIRED_SCOPES, BrokerManager, CloudIdCache, KeePassProfile, ProfileStore, validate_profile
 from .config import load_project_config, project_root_from_environment
 from .errors import AuthenticationError, DevtoolsError, InputValidationError
-from .jira import parse_includes, prepare_issue_view, render_issue_markdown, validate_view
+from .jira import (
+    parse_includes,
+    prepare_issue_view,
+    prepare_search_view,
+    render_issue_markdown,
+    render_search_markdown,
+    validate_view,
+)
 from .models import BrokerStatus, PreviewResult
 from .operations import execute_operation
 from .redaction import redact_data, redact_text
@@ -263,6 +270,20 @@ def _optional_value_or_environment(value: str | None, environment_name: str) -> 
 
     result = value if value is not None else os.environ.get(environment_name)
     return result or None
+
+
+def _optional_int_or_environment(value: int | None, environment_name: str, label: str) -> int | None:
+    """The int-typed counterpart to `_optional_value_or_environment`: empty means unset."""
+
+    if value is not None:
+        return value
+    raw = os.environ.get(environment_name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return int(raw.strip())
+    except ValueError as exc:
+        raise InputValidationError(f"{label} must be an integer.") from exc
 
 
 def _parse_entries(entries: list[str]) -> dict[str, str]:
@@ -530,6 +551,56 @@ def read_jira_issue(
         action,
         default_format="markdown",
         markdown_renderer=render_issue_markdown,
+    )
+
+
+@jira_app.command("search-jira-issues")
+def search_jira_issues(
+    context: typer.Context,
+    jql: Annotated[str | None, typer.Argument(help="JQL query, e.g. 'project = DEV AND status = Open'.")] = None,
+    fields: Annotated[
+        str | None, typer.Option("--fields", help="Comma-separated field list, e.g. 'summary,status'.")
+    ] = None,
+    view: Annotated[str, typer.Option("--view", help="Issue view: summary or full.")] = "summary",
+    limit: Annotated[int | None, typer.Option("--limit", help="Maximum number of issues to return (1-100).")] = None,
+    next_page_token: Annotated[
+        str | None, typer.Option("--next-page-token", help="Pagination token from a previous search response.")
+    ] = None,
+    expand: Annotated[
+        str | None, typer.Option("--expand", help="Comma-separated entities to expand, e.g. 'changelog'.")
+    ] = None,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+
+    def action() -> dict[str, Any]:
+        resolved_fields = _optional_value_or_environment(fields, "JUST_DEV_JIRA_SEARCH_FIELDS")
+        resolved_view = _option_or_environment(view, "JUST_DEV_JIRA_SEARCH_VIEW", "summary")
+        resolved_view = validate_view(resolved_view)
+        resolved_limit = _optional_int_or_environment(limit, "JUST_DEV_JIRA_SEARCH_LIMIT", "--limit")
+        result = (
+            _runtime(context)
+            .service(profile)
+            .search_jira_issues(
+                _argument_or_environment(jql, "JUST_DEV_JIRA_SEARCH_JQL", "JQL query"),
+                fields=resolved_fields,
+                view=resolved_view,
+                limit=resolved_limit,
+                next_page_token=_optional_value_or_environment(next_page_token, "JUST_DEV_JIRA_SEARCH_NEXT_PAGE_TOKEN"),
+                expand=_optional_value_or_environment(expand, "JUST_DEV_JIRA_SEARCH_EXPAND"),
+            )
+        )
+        return prepare_search_view(result, fields=resolved_fields, view=resolved_view)
+
+    _execute(
+        context,
+        action,
+        default_format="markdown",
+        markdown_renderer=render_search_markdown,
     )
 
 
