@@ -8,6 +8,30 @@ because it is a recipe-syntax-level change, not a bug fix. Everything else
 from that report (F1, F2, F3, F4, F6, R4, R5, U2, F5) has been fixed; see
 that branch's commit and `attach-jira-issue`'s addition for details.
 
+## Unfixed findings from the search/attach exploratory pass
+
+`search-jira-issues` and `attach-jira-issue` shipped after the original
+report and were never exercised by it. A follow-up exploratory session (see
+`docs/jira-search-attach-exploratory-report.pdf`) covered both live against
+Jira Cloud and found two open, unfixed defects:
+
+- **F7 — `search-jira-issues --view full` silently returns empty per-issue
+  data when `--fields` isn't also given.** `jira_fields_parameter()` omits
+  the `fields` query parameter for a full view with no explicit fields,
+  which is the correct default for the single-issue read endpoint but not
+  for `search/jql`, whose own default when `fields` is omitted is no fields
+  at all. Fix: send an explicit "all fields" request instead of omitting
+  the parameter when `view == "full"` and no fields were given.
+- **F8 — `--safe` deletes `attach-jira-issue`'s entire result, not just
+  PII.** `filter_safe_output()`'s redaction regex matches
+  `attachment(?:s)?`/`filename` as leaf noise inside nested user/URL
+  objects, but `attach-jira-issue`'s own result uses those exact names as
+  top-level keys, so `--safe` reduces a successful attach's output to
+  `{"issue_id_or_key": "..."}` — no confirmation anything was attached. The
+  same collision silently empties `read-jira-issue --include attachments
+  --safe` too. Fix: scope the redaction match to nested/leaf keys, or
+  exempt these commands' own top-level result shape.
+
 ## U3 — No per-recipe `--help`
 
 **Status: won't fix (resolved 2026-08-27).** `just --list <namespace>` (e.g.
