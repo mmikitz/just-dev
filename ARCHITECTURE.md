@@ -52,6 +52,7 @@ invoke the same recipe and remain supported.
 | `just update-jira-issue KEY [JSON]` | `just jira update-jira-issue KEY [JSON]` |
 | `just assign-jira-issue KEY --assignee ACCOUNT_ID` | `just jira assign-jira-issue KEY --assignee ACCOUNT_ID` |
 | `just comment-jira-issue KEY COMMENT` | `just jira comment-jira-issue KEY COMMENT` |
+| `just attach-jira-issue KEY FILE_PATH` | `just jira attach-jira-issue KEY FILE_PATH` |
 | `just transition-jira-issue KEY STATUS` | `just jira transition-jira-issue KEY STATUS` |
 | `just delete-jira-issue KEY` | `just jira delete-jira-issue KEY` |
 | `just jira-integration-smoke` | `just jira jira-integration-smoke` |

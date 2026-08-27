@@ -38,6 +38,10 @@ class FakeJiraAdapter:
         self.calls.append(("comment", self.cloud_id, token, issue_id_or_key, request))
         return {"issue_id_or_key": issue_id_or_key, "request": request}
 
+    def attach_file(self, token: str, issue_id_or_key: str, filename: str, content_b64: str) -> dict:
+        self.calls.append(("attach", self.cloud_id, token, issue_id_or_key, filename, content_b64))
+        return {"issue_id_or_key": issue_id_or_key, "filename": filename}
+
     def list_transitions(self, token: str, issue_id_or_key: str) -> dict:
         self.calls.append(("list_transitions", self.cloud_id, token, issue_id_or_key))
         return {"transitions": [{"id": "11", "to": {"name": "Done"}}]}
@@ -152,7 +156,7 @@ def test_jira_crud_operations_forward_complete_request_objects(config, monkeypat
     assert [call[0] for call in FakeJiraAdapter.calls] == ["create", "read", "update", "delete"]
 
 
-def test_jira_assign_comment_and_transition_operations_forward_to_the_adapter(config, monkeypatch) -> None:
+def test_jira_assign_comment_attach_and_transition_operations_forward_to_the_adapter(config, monkeypatch) -> None:
     FakeJiraAdapter.calls = []
     monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
     payload = {"config": config.model_dump(mode="json")}
@@ -164,6 +168,11 @@ def test_jira_assign_comment_and_transition_operations_forward_to_the_adapter(co
     comment = execute_operation(
         tokens, "jira.comment_issue", {**payload, "issue_id_or_key": "DEV-1", "comment": "Looks good"}
     )
+    attached = execute_operation(
+        tokens,
+        "jira.attach_file",
+        {**payload, "issue_id_or_key": "DEV-1", "filename": "notes.txt", "content_b64": "ZmlsZQ=="},
+    )
     transitions = execute_operation(tokens, "jira.list_transitions", {**payload, "issue_id_or_key": "DEV-1"})
     transition = execute_operation(
         tokens, "jira.transition_issue", {**payload, "issue_id_or_key": "DEV-1", "transition_id": "11"}
@@ -171,9 +180,24 @@ def test_jira_assign_comment_and_transition_operations_forward_to_the_adapter(co
 
     assert assign["assignee"] == "acc-123"
     assert comment["request"]["body"]["content"][0]["content"][0]["text"] == "Looks good"
+    assert attached == {"issue_id_or_key": "DEV-1", "filename": "notes.txt"}
     assert transitions["transitions"][0]["to"]["name"] == "Done"
     assert transition["transition_id"] == "11"
-    assert [call[0] for call in FakeJiraAdapter.calls] == ["assign", "comment", "list_transitions", "transition"]
+    assert [call[0] for call in FakeJiraAdapter.calls] == [
+        "assign",
+        "comment",
+        "attach",
+        "list_transitions",
+        "transition",
+    ]
+    assert FakeJiraAdapter.calls[2] == (
+        "attach",
+        "00000000-0000-4000-8000-000000000123",
+        "jira-secret",
+        "DEV-1",
+        "notes.txt",
+        "ZmlsZQ==",
+    )
     assert FakeJiraAdapter.calls[0] == (
         "assign",
         "00000000-0000-4000-8000-000000000123",

@@ -4,56 +4,9 @@ Deferred findings from the Jira CLI exploratory QA report (see the
 `claude/jira-cli-exploratory-execution-8q55i5` branch report, archived at
 `docs/jira-cli-exploratory-report.pdf`). Both were
 explicitly scoped out of the fix pass on `claude/project-review-fixes-mif32d`
-because they are feature work or a recipe-syntax-level change, not bug fixes.
-Everything else from that report (F1, F2, F3, F6, R4, R5, U2, F5) has been
-fixed; see that branch's commit for details.
-
-## F4 — No attachment-upload path on any Jira recipe
-
-**Status:** product decision, not a bug. None of the 7 `jira::*` recipes
-expose a way to attach a file to an issue.
-
-**What exists today:** `read-jira-issue --include attachments` confirms
-attachment *metadata* is readable (`_INCLUDE_FIELDS["attachments"]` in
-`scripts/devtools/src/just_dev/jira.py`), but there is no adapter method,
-CLI command, or recipe that uploads one.
-
-**What adding it would take**, following the repo's own "Checklist for
-adding a new command" in `UX-DESIGN-PRINCIPLES.md`:
-
-1. A new `JiraAdapter` method in `scripts/devtools/src/just_dev/adapters.py`
-   wrapping the `atlassian-python-api` `Jira.add_attachment` (or equivalent
-   multipart upload) call, decorated with `@_sdk_errors("Jira")` like every
-   other adapter method.
-2. A new `jira.attach_file` (or similar) branch in
-   `scripts/devtools/src/just_dev/operations.py`'s `execute_operation`
-   dispatch.
-3. A workflow method on `DevtoolsService` in `workflows.py` that validates
-   the file path/size, builds the preview, and calls `confirm_mutation`
-   like every other mutating Jira command (`--dry-run`/`--yes` must both
-   work per UX principle 9).
-4. A `attach-jira-issue` (name TBD) Typer command in `cli.py`, plus the
-   matching recipe in `scripts/devtools/recipes/jira.just` and alias in
-   `scripts/devtools/justfile`.
-5. Decide how the file reaches the broker process: the local KeePass
-   broker and the CI in-process path (`_CiOperationClient`) both take a
-   JSON-serializable payload today (see `BrokerClient`/`execute_operation`
-   signatures) — binary file content will need either a base64-encoded
-   payload field or a path reference the broker process can read directly
-   (simpler for the CI path, needs checking for the local broker's
-   subprocess boundary).
-6. Tests in `test_adapters.py` (fake client asserting the multipart
-   call), `test_operations.py` (dispatch), `test_workflows.py` (preview/
-   confirm/dry-run), `test_cli.py` (end-to-end), and `test_justfiles.py`
-   (alias parity), per `QA-STRATEGY.md`'s layered testing convention.
-7. Update `README.md`'s Jira command list and `ARCHITECTURE.md`'s alias
-   table (UX principle 2: nothing README-only).
-
-**Open question for whoever picks this up:** should this be its own command
-(`attach-jira-issue KEY --file path`, one target/one backend action per UX
-principle 12), or a flag on `update-jira-issue`? The former matches how
-`assign-jira-issue`/`comment-jira-issue`/`transition-jira-issue` are already
-split out from `update-jira-issue` for the same reason.
+because it is a recipe-syntax-level change, not a bug fix. Everything else
+from that report (F1, F2, F3, F4, F6, R4, R5, U2, F5) has been fixed; see
+that branch's commit and `attach-jira-issue`'s addition for details.
 
 ## U3 — No per-recipe `--help`
 
