@@ -35,6 +35,7 @@ def default_config_path(project_root: Path | None = None) -> Path:
 
 
 def load_project_config(path: Path | str | None = None, *, project_root: Path | None = None) -> ProjectConfig:
+    explicit_path = path is not None
     config_path = Path(path) if path else default_config_path(project_root)
     try:
         with config_path.open("rb") as config_file:
@@ -46,10 +47,34 @@ def load_project_config(path: Path | str | None = None, *, project_root: Path | 
     except OSError as exc:
         raise ConfigurationError(f"Unable to read project configuration: {exc}") from exc
 
+    if not explicit_path:
+        raw = _apply_test_overrides(raw)
+
     try:
         return ProjectConfig.model_validate(raw)
     except ValidationError as exc:
         raise ConfigurationError(f"Invalid project configuration: {exc}") from exc
+
+
+def _apply_test_overrides(raw: dict) -> dict:
+    """Overlay TEST_CLOUD_ID / TEST_JIRA_PROJECT onto the default, checked-in config.
+
+    Lets an isolated session (no local secrets store available) point the CLI at a
+    personal Atlassian account for end-to-end testing, without ever writing real
+    account values into the checked-in, secret-free project.toml. Only applies when
+    loading the default config path: an explicit --config always wins untouched, so
+    this can't shadow a config a caller (tests included) picked deliberately.
+    """
+    cloud_id = os.environ.get("TEST_CLOUD_ID")
+    if cloud_id:
+        raw.setdefault("atlassian", {})["cloud_id"] = cloud_id
+
+    jira_project = os.environ.get("TEST_JIRA_PROJECT")
+    if jira_project:
+        for preset in raw.get("jira", {}).get("presets", {}).values():
+            preset["project"] = jira_project
+
+    return raw
 
 
 def require_real_value(value: str, label: str) -> str:
