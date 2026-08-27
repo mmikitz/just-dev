@@ -1,5 +1,24 @@
 # Architecture
 
+## Goals
+
+The overarching goal of this project is to make software delivery teams —
+PdM, PM, dev, and test — more productive in their daily workflows. Everything
+else in this document is in service of that, and it is why the CLI must be:
+
+- **Learnable.** A new user shouldn't need to read documentation, let alone
+  the source code, to get something done. They need to be able to learn how
+  to accomplish their goals from `--help` output and from error/success
+  messages alone. See `UX-DESIGN-PRINCIPLES.md` principles 1–3 and 10.
+- **Easy to use.** Goals should be quick and easy to accomplish with minimal
+  interaction, especially recurring ones — sensible defaults, few required
+  flags, no unnecessary ceremony.
+- **Functionally correct.** Commands do exactly what they claim, with no
+  silent partial failures.
+- **Robust**, including helpful error messages. Failure modes are handled
+  explicitly and reported in a way that names the next step, not a stack
+  trace or a generic exception. See `UX-DESIGN-PRINCIPLES.md` principle 3.
+
 ## Boundaries and layout
 
 `scripts/devtools/` is a portable, self-contained integration package. A host

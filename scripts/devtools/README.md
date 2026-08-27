@@ -157,7 +157,9 @@ just create-jira-issue bug "Summary" --description "Details" --fields '{"customf
 just read-jira-issue ABC-123 --fields summary,status
 just update-jira-issue ABC-123 --summary "Updated summary" '{"notifyUsers":false}'
 just update-jira-issue ABC-123 --labels "bug,urgent" --priority High
+just update-jira-issue ABC-123 '{"update":{"issuelinks":[{"add":{"type":{"name":"Relates"},"outwardIssue":{"key":"ABC-124"}}}]}}'
 just assign-jira-issue ABC-123 --assignee 5b10a2844c20165700ede21g
+just assign-jira-issue ABC-123 --assignee jane.doe@example.com
 just comment-jira-issue ABC-123 "Deployed to staging."
 just transition-jira-issue ABC-123 "Done"
 just delete-jira-issue ABC-123 --delete-subtasks
@@ -180,6 +182,16 @@ shows a preview and requires interactive confirmation. Jira create presets
 control project, issue type, labels, and components; custom `--fields` cannot
 override those preset-managed fields.
 
+`assign-jira-issue --assignee` accepts either a Jira accountId or an email
+address; an email is resolved to an accountId via Jira's user search, and the
+command fails with a clear error if it matches zero or more than one user.
+
+There is no dedicated flag for issue linking; use `update-jira-issue`'s raw
+JSON body with Jira's own `issuelinks` update shape, as shown above.
+`--summary`/`--description`/`--labels`/`--priority` and the JSON body's
+`fields.*` cannot both set the same field in one call — the command rejects
+the combination rather than silently picking one.
+
 ## CI and verification
 
 CI does not start or modify a local broker or auth profile. In a CI process
@@ -193,8 +205,12 @@ JUST_DEV_CI_BITBUCKET_TOKEN
 JUST_DEV_CI_JENKINS_TOKEN
 ```
 
-A missing CI scope names the required variable in its error. Run the main local
-checks from `scripts/devtools/` with:
+A missing CI scope names the required variable in its error. Because CI
+authenticates via those tokens rather than the local KeePass broker,
+`show-auth-status` reports on the CI tokens instead (`source: ci`) when
+`CI` is set, rather than the (always-absent) local broker session.
+
+Run the main local checks from `scripts/devtools/` with:
 
 ```text
 uv run --locked pytest
@@ -205,3 +221,23 @@ From the repository root, run the full local gate with:
 ```text
 just qa
 ```
+
+## Exit codes
+
+Every command's exit code names the failure class, so scripts can branch on
+it without parsing error text:
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | Success. |
+| `1`  | Unexpected/unhandled failure. |
+| `2`  | CLI usage error (missing/unknown flag or argument). |
+| `20` | Configuration error (missing or invalid project/profile config). |
+| `21` | Authentication error (credentials rejected or missing). |
+| `22` | Permission denied by the remote service. |
+| `23` | Conflict (the remote resource changed since it was read). |
+| `24` | Network/remote-service error (including rate limiting). |
+| `25` | Input validation error (bad argument, value, or remote 4xx rejection). |
+| `26` | Confirmation refused (mutating command run without `--yes` outside a TTY). |
+| `27` | Broker error (local credential broker failure). |
+| `28` | Verification error (`verify-project`/`run-ci` check failed). |

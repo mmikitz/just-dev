@@ -121,7 +121,12 @@ def render_issue_markdown(value: Any) -> str:
         if name == "summary":
             continue
         label = name.replace("_", " ").title()
-        if isinstance(item, Mapping | list | tuple):
+        # A Mapping with a name/key/value/displayName (status, assignee, priority...) is an
+        # identity lookup, not a bulky payload; show its label inline instead of expanding it.
+        needs_expansion = isinstance(item, list | tuple) or (
+            isinstance(item, Mapping) and _identity_label(item) is None
+        )
+        if needs_expansion:
             lines.append(f"## {label}")
             lines.append(render_markdown(item))
         else:
@@ -129,13 +134,20 @@ def render_issue_markdown(value: Any) -> str:
     return "\n".join(lines) or render_markdown(value)
 
 
+def _identity_label(value: Mapping[str, Any]) -> str | None:
+    """The human-readable label a Jira identity/lookup object (status, user, priority...) carries."""
+
+    for key in ("name", "key", "value", "displayName"):
+        candidate = value.get(key)
+        if candidate is not None:
+            return str(candidate)
+    return None
+
+
 def _display_value(value: Any) -> str:
     if isinstance(value, Mapping):
-        for key in ("name", "key", "value", "displayName"):
-            candidate = value.get(key)
-            if candidate is not None:
-                return str(candidate)
-        return render_markdown(value)
+        label = _identity_label(value)
+        return label if label is not None else render_markdown(value)
     if value is None:
         return ""
     return str(value)

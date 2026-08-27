@@ -177,6 +177,49 @@ def test_update_jira_issue_accepts_priority_alone(config, tmp_path) -> None:
     assert broker.calls[0][1]["priority"] == "High"
 
 
+def test_update_jira_issue_rejects_a_field_set_by_both_the_json_body_and_a_flag(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError, match="summary"):
+        service.update_jira_issue(
+            "DEV-1",
+            summary="from flag",
+            fields={"fields": {"summary": "from json"}},
+            yes=True,
+        )
+
+    assert broker.calls == []
+
+
+def test_update_jira_issue_allows_the_json_body_and_flags_to_set_different_fields(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    service.update_jira_issue(
+        "DEV-1",
+        summary="from flag",
+        fields={"fields": {"description": "from json"}},
+        yes=True,
+    )
+
+    assert broker.calls[0][1]["summary"] == "from flag"
+    assert broker.calls[0][1]["request"] == {"fields": {"description": "from json"}}
+
+
+@pytest.mark.parametrize("issue_id_or_key", ["not a valid key!!", "-123", "ABC-"])
+def test_jira_commands_reject_a_malformed_issue_key_before_calling_the_broker(
+    config, tmp_path, issue_id_or_key
+) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError):
+        service.read_jira_issue(issue_id_or_key)
+
+    assert broker.calls == []
+
+
 def test_assign_jira_issue_announces_preview_before_confirming(config, tmp_path) -> None:
     broker = FakeBroker()
     announced: list[PreviewResult] = []

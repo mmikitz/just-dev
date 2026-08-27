@@ -30,6 +30,7 @@ from .models import (
     PageResult,
     PullRequestResult,
 )
+from .redaction import redact_text
 
 
 class JiraClient(Protocol):
@@ -42,6 +43,8 @@ class JiraClient(Protocol):
     def put(self, path: str, *, data: dict[str, Any] | None = None, params: dict[str, Any] | None = None) -> Any: ...
 
     def delete(self, path: str, *, params: dict[str, Any] | None = None) -> Any: ...
+
+    def user_find_by_user_string(self, *, query: str) -> Any: ...
 
 
 class BitbucketClient(Protocol):
@@ -146,6 +149,35 @@ def _exception_status(error: Exception) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _remote_error_detail(error: Exception) -> str | None:
+    """Pull Jira/Atlassian-style field errors out of a response body, redacted for safety.
+
+    Deliberately narrow: only the ``errorMessages``/``errors`` shape the Atlassian REST
+    APIs use is extracted, never the raw body, so an unrelated service's response can't
+    leak arbitrary content into an error message.
+    """
+
+    for candidate in (error, getattr(error, "reason", None)):
+        response = getattr(candidate, "response", None)
+        json_method = getattr(response, "json", None)
+        if not callable(json_method):
+            continue
+        try:
+            body = json_method()
+        except ValueError:
+            continue
+        if not isinstance(body, Mapping):
+            continue
+        error_messages = body.get("errorMessages")
+        parts = [str(item) for item in error_messages if item] if isinstance(error_messages, list) else []
+        field_errors = body.get("errors")
+        if isinstance(field_errors, Mapping):
+            parts.extend(f"{field}: {message}" for field, message in field_errors.items())
+        if parts:
+            return redact_text("; ".join(parts))
+    return None
+
+
 def _sdk_error(service: str, error: Exception) -> DevtoolsError:
     status = _exception_status(error)
     if status == 401:
@@ -157,7 +189,11 @@ def _sdk_error(service: str, error: Exception) -> DevtoolsError:
     if status == 429:
         return NetworkError("Remote service rate limit reached; retry later.")
     if status is not None and 400 <= status < 500:
-        return InputValidationError(f"Remote service rejected the request ({status}).")
+        message = f"Remote service rejected the request ({status})."
+        detail = _remote_error_detail(error)
+        if detail:
+            message = f"{message} {detail}"
+        return InputValidationError(message)
     if status is not None:
         return NetworkError(f"{service} request failed with HTTP {status}.")
     if isinstance(error, ApiPermissionError):
@@ -253,11 +289,32 @@ class JiraAdapter:
         response = client.delete(self._issue_path(client, issue_id_or_key), params=dict(parameters) or None)
         return self._completed_response(response, {"issue_id_or_key": issue_id_or_key, "deleted": True})
 
+    @staticmethod
+    def _resolve_assignee(client: JiraClient, assignee: str) -> str:
+        """Accept a Jira accountId as-is; resolve an email address to one via user search."""
+
+        if "@" not in assignee:
+            return assignee
+        results = client.user_find_by_user_string(query=assignee)
+        candidates = [
+            user
+            for user in (results if isinstance(results, list) else [])
+            if isinstance(user, Mapping) and isinstance(user.get("accountId"), str)
+        ]
+        exact = [user for user in candidates if str(user.get("emailAddress", "")).lower() == assignee.lower()]
+        matches = exact or candidates
+        if len(matches) == 1:
+            return str(matches[0]["accountId"])
+        if not matches:
+            raise InputValidationError(f"No Jira user found for '{assignee}'. Pass a Jira accountId instead.")
+        raise InputValidationError(f"'{assignee}' matched multiple Jira users; pass a Jira accountId instead.")
+
     @_sdk_errors("Jira")
     def assign_issue(self, token: str, issue_id_or_key: str, account_id: str) -> dict[str, Any]:
         client = self._client(token)
-        response = client.put(f"{self._issue_path(client, issue_id_or_key)}/assignee", data={"accountId": account_id})
-        return self._completed_response(response, {"issue_id_or_key": issue_id_or_key, "assignee": account_id})
+        resolved = self._resolve_assignee(client, account_id)
+        response = client.put(f"{self._issue_path(client, issue_id_or_key)}/assignee", data={"accountId": resolved})
+        return self._completed_response(response, {"issue_id_or_key": issue_id_or_key, "assignee": resolved})
 
     @_sdk_errors("Jira")
     def comment_issue(self, token: str, issue_id_or_key: str, request: Mapping[str, Any]) -> dict[str, Any]:
