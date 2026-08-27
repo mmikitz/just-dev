@@ -74,3 +74,11 @@ transition-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_STATUS $JUST
 [arg('JUST_DEV_SAFE', long='safe', value='1')]
 delete-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_DELETE_SUBTASKS='' $JUST_DEV_DRY_RUN='' $JUST_DEV_YES='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev jira delete-jira-issue
+
+# Opt-in only: hits a real, live Jira site (see QA-STRATEGY.md's "Live integration smoke tests are
+# opt-in" layer). Never run by `qa`/`run-ci`. Creates and deletes two throwaway issues; requires
+# unlocked credentials for the active profile. See recipes/jira_integration_smoke.py for details.
+[working-directory(devtools_root)]
+[env('JUST_DEV_PROJECT_ROOT', project_root)]
+jira-integration-smoke:
+    @uv run --locked python recipes/jira_integration_smoke.py

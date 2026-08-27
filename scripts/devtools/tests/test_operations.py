@@ -197,6 +197,21 @@ def test_jira_update_body_omits_labels_and_priority_when_not_supplied() -> None:
     assert "priority" not in body["fields"]
 
 
+def test_jira_update_body_named_flags_silently_override_matching_positional_request_fields() -> None:
+    """update-jira-issue accepts both a positional JSON request and named flags (--summary etc.) in the
+    same call; a caller relying on the positional body to win (e.g. a hand-built ADF description) would
+    lose that value with no warning, so this pins the current last-write-wins precedence exactly."""
+    body = operations._jira_update_body(
+        {
+            "request": {"fields": {"summary": "from positional", "labels": ["kept"]}},
+            "summary": "from flag",
+        }
+    )
+
+    assert body["fields"]["summary"] == "from flag"
+    assert body["fields"]["labels"] == ["kept"]
+
+
 def test_bitbucket_create_pull_request_forwards_description_reviewers_and_close_source_branch(
     config, monkeypatch
 ) -> None:
