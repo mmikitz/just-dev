@@ -6,12 +6,7 @@ from requests.exceptions import RequestException, Timeout
 
 import just_dev.adapters as adapters
 from just_dev.adapters import BitbucketAdapter, ConfluenceAdapter, JenkinsAdapter, JiraAdapter
-from just_dev.errors import (
-    AuthenticationError,
-    ConflictError,
-    NetworkError,
-    PermissionDeniedError,
-)
+from just_dev.errors import AuthenticationError, ConflictError, NetworkError, PermissionDeniedError
 from just_dev.models import BitbucketSettings, ConfluencePreset, JenkinsPreset, JenkinsSettings
 
 
