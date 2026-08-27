@@ -203,11 +203,18 @@ class DevtoolsService:
             raise ConfigurationError("Devtools check failed: " + "; ".join(problems) + ".")
         return PreviewResult(action="check-devtools", details={"status": "ok"})
 
-    @staticmethod
-    def _jira_issue_id_or_key(value: str) -> str:
-        if not value.strip():
+    _JIRA_ISSUE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]*-[0-9]+$")
+
+    @classmethod
+    def _jira_issue_id_or_key(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
             raise InputValidationError("Issue ID or key must not be empty.")
-        return value.strip()
+        if not (value.isdigit() or cls._JIRA_ISSUE_KEY.match(value)):
+            raise InputValidationError(
+                f"'{value}' is not a valid Jira issue ID or key (expected e.g. 'ABC-123' or a numeric ID)."
+            )
+        return value
 
     _JIRA_PRESET_MANAGED_FIELDS = frozenset({"project", "issuetype", "labels", "components"})
 
@@ -303,6 +310,16 @@ class DevtoolsService:
         extra = dict(fields or {})
         if summary is None and description is None and labels is None and priority is None and not extra:
             raise InputValidationError("Provide a summary, a description, or a JSON request body to update.")
+        extra_fields = extra.get("fields")
+        if isinstance(extra_fields, Mapping):
+            named = {"summary": summary, "description": description, "labels": labels, "priority": priority}
+            conflicts = sorted(name for name, value in named.items() if value is not None and name in extra_fields)
+            if conflicts:
+                flags = ", ".join(f"--{name}" for name in conflicts)
+                raise InputValidationError(
+                    f"The JSON request body's fields.{'/'.join(conflicts)} and {flags} both set the same "
+                    "field(s); remove one to avoid ambiguity."
+                )
         preview = PreviewResult(
             action="update Jira issue",
             details={
@@ -344,7 +361,7 @@ class DevtoolsService:
         self._validate_atlassian()
         key = self._jira_issue_id_or_key(issue_id_or_key)
         if not assignee.strip():
-            raise InputValidationError("Assignee account ID must not be empty.")
+            raise InputValidationError("Assignee account ID or email must not be empty.")
         preview = PreviewResult(action="assign Jira issue", details={"issue_id_or_key": key, "assignee": assignee})
         if dry_run:
             return preview

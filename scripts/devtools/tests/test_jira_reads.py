@@ -34,6 +34,17 @@ def test_jira_summary_view_requests_and_returns_only_concise_opted_in_sections()
     assert render_issue_markdown(view).startswith("# DEV-1: Investigate login failure")
 
 
+def test_render_issue_markdown_keeps_identity_fields_compact() -> None:
+    markdown = render_issue_markdown(prepare_issue_view(_issue(), view="summary"))
+
+    assert "- **Status:** In Progress" in markdown
+    assert "- **Assignee:** Ada" in markdown
+    assert "- **Reporter:** Grace" in markdown
+    assert "## Status" not in markdown
+    assert "## Assignee" not in markdown
+    assert "accountId" not in markdown
+
+
 def test_jira_full_view_keeps_regular_fields_but_requires_explicit_bulky_includes() -> None:
     view = prepare_issue_view(_issue(), fields="summary,description", includes=(), view="full")
 

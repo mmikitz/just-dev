@@ -129,3 +129,4 @@ class BrokerStatus(StrictModel):
     expires_at: datetime | None = None
     platform: str | None = None
     pid: int | None = None
+    source: str | None = None
