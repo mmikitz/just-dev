@@ -23,6 +23,13 @@ remove any temporary owner bypass once a second reviewer is available.
   request payloads, response normalization, and HTTP error translation.
 - Workflow and CLI tests cover allowlists, missing-scope recovery guidance,
   Jira view/filter forwarding, and CI credential handling.
+- Adapter and workflow tests also cover the diagnosability contract in
+  `UX-DESIGN-PRINCIPLES.md` principles 13–17: remote error-detail
+  passthrough on 4xx responses, identity-to-accountId resolution,
+  positional/flag conflict rejection, and locally-rejected malformed input
+  before any broker call. A new command that touches any of these paths
+  needs a regression test for its own case, not just reliance on the
+  shared adapter/workflow tests already in place.
 - Just recipe tests verify every flat alias and namespaced form, including
   spaces, special characters, repeated auth options, and output flags.
 - `check-changed` tests verify staged-file-to-test selection and the full-suite

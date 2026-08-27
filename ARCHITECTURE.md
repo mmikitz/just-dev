@@ -14,10 +14,14 @@ else in this document is in service of that, and it is why the CLI must be:
   interaction, especially recurring ones — sensible defaults, few required
   flags, no unnecessary ceremony.
 - **Functionally correct.** Commands do exactly what they claim, with no
-  silent partial failures.
+  silent partial failures — e.g. a command must reject two inputs that
+  conflict rather than silently letting one win. See
+  `UX-DESIGN-PRINCIPLES.md` principle 15.
 - **Robust**, including helpful error messages. Failure modes are handled
   explicitly and reported in a way that names the next step, not a stack
-  trace or a generic exception. See `UX-DESIGN-PRINCIPLES.md` principle 3.
+  trace or a generic exception, and a remote rejection surfaces the remote
+  service's own reason rather than a bare status code. See
+  `UX-DESIGN-PRINCIPLES.md` principles 3, 13, and 17.
 
 ## Boundaries and layout
 

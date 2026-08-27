@@ -10,9 +10,15 @@ audiences at once, not just the one the author had in mind.
 
 Most of these were established by a review pass that audited the CLI for
 discoverability and learnability gaps before this pass added Jira/Bitbucket
-mutation coverage; the last principle is new to this pass. Each principle
-below cites something concrete and checkable in this codebase — a file, a
-test, or an actual command's behavior — rather than an abstract claim.
+mutation coverage; principle 12 was new to that pass. Principles 13–19 were
+added after a later live-Jira exploratory QA pass (see
+`docs/jira-cli-exploratory-report.pdf` and `OPEN_ISSUES.md`) whose findings
+(F1–F3, F6, R5, U2) were fixed in code — the fix commit changed adapters,
+workflows, and the CLI, but left this document unchanged, so the generalizable
+lesson behind each fix wasn't captured anywhere a future change would see it
+before repeating the same mistake with a new command. Each principle below
+cites something concrete and checkable in this codebase — a file, a test, or
+an actual command's behavior — rather than an abstract claim.
 
 ## The principles
 
@@ -156,6 +162,114 @@ not a different endpoint. The test is not "is this a new field?" — it's "does
 satisfying this request mean calling a different endpoint?" If yes, new
 command. If no, new flag.
 
+## 13. Surface the remote service's own error detail (new in the QA-report pass)
+
+Never let a failure collapse to a bare status code when the remote service
+already sent back the reason. `_sdk_error` in `src/just_dev/adapters.py`
+calls `_remote_error_detail` on any 4xx, which extracts Jira/Atlassian's own
+`errorMessages`/`errors` body — redacted through the existing `redact_text`
+filter — and appends it to the message instead of stopping at "Remote
+service rejected the request (NNN)." Every adapter method decorated with
+`@_sdk_errors(...)` gets this for free through the one shared mapper; a new
+adapter method only loses it by raising its own exception instead of letting
+`_sdk_errors` translate it. Before this fix, a nonexistent issue key, a
+malformed key, and a 2000-character summary (Jira's real limit is 255) all
+produced the identical three-word message.
+
+## 14. Resolve a human-memorable identifier before rejecting it (new in the QA-report pass)
+
+When an API demands an opaque ID but a human will always reach for the value
+they actually have memorized, resolve it internally rather than erroring and
+expecting the caller to already know the opaque shape. `JiraAdapter.
+_resolve_assignee` in `adapters.py` passes a Jira accountId through
+unchanged but resolves anything containing `@` via
+`client.user_find_by_user_string`, and only raises `InputValidationError`
+when that search is ambiguous or empty — it never silently guesses. Before
+this fix, `assign-jira-issue --assignee someone@example.com` — the single
+most obvious value to hand that flag — failed with an opaque 404, and the
+only way to discover that an accountId was expected was to have already
+read one out of a prior `read-jira-issue` response. A new command that
+accepts a Jira/Bitbucket identity should ask the same question: is there a
+human-obvious form of this ID, and can it be resolved instead of demanded?
+
+## 15. Reject redundant or conflicting inputs; never pick a silent winner (new in the QA-report pass)
+
+When a command can express the same intent through two different inputs in
+one call — a raw JSON body and a named flag that touch the same field —
+detect the overlap and fail with a clear `InputValidationError` naming the
+conflicting names, rather than letting one silently win with no trace in
+the preview, the dry-run output, or the real result.
+`update_jira_issue`'s `conflicts = sorted(...)` check in `workflows.py`
+(~line 316) runs before the request is ever built; `test_workflows.py`
+covers both the rejected-overlap case and the allowed case where the JSON
+body and flags touch disjoint fields. Before this fix, passing both a
+positional JSON body and `--summary` with different values silently applied
+the flag's value with no warning anywhere in the output. Apply the same
+check to any future command that accumulates fields from more than one
+input source.
+
+## 16. A diagnostic command must check every credential path it claims to report on (new in the QA-report pass)
+
+A status/diagnostic command exists to tell the truth about what's actually
+happening; if it only inspects one of several ways the tool can be
+authenticated, it will confidently lie under any other. `show_auth_status`
+in `cli.py` used to always report on the local KeePass broker, even under
+`CI=true`, where the broker never starts and the CI env-var tokens are what
+every other command actually authenticates with — so the one command a new
+user or CI maintainer is told to run first gave a false negative while
+every real operation succeeded. It now branches on `_ci_enabled()` and
+reports `BrokerStatus(source="ci")` off the configured CI scopes instead.
+When a capability has more than one way of establishing state, the command
+whose whole job is reporting that state must check all of them, not just
+the one built first.
+
+## 17. Validate what's cheap and local before spending a network round-trip (new in the QA-report pass)
+
+A syntactically-impossible input should fail immediately and specifically,
+not be sent to the remote API only to come back as the same generic 4xx as
+a real "not found." `DevtoolsService._jira_issue_id_or_key` in
+`workflows.py` rejects a value that doesn't match a plausible Jira key or
+numeric ID before any broker call;
+`test_workflows.py::test_jira_commands_reject_a_malformed_issue_key_before_calling_the_broker`
+asserts zero broker calls for a malformed key. This complements principle
+13, not replaces it — the remote call can still fail for reasons only the
+server can know (an issue that doesn't exist, a field that's too long); this
+principle only front-loads the subset of validation that never needed to
+ask the server at all.
+
+## 18. A stable, documented exit-code contract (new in the QA-report pass)
+
+Every distinct failure class — usage error, config error, auth error,
+permission denied, conflict, network, input validation, confirmation
+refused, broker error, verification error — maps to one fixed exit code
+(see the error classes in `src/just_dev/errors.py`), documented in the
+"Exit codes" table in `scripts/devtools/README.md`. A script or CI job
+should be able to branch on the code alone without parsing message text.
+Before this was documented, the split already existed in code but nothing
+in `--list` or any error named it, so a CI author would have had to
+reverse-engineer it by triggering every error class once — exactly as the
+QA session did. When a change introduces a genuinely new failure class,
+give it its own code and add a row; don't fold it into an existing code
+whose meaning would then stop being precise. (Whether this table should
+also be surfaced somewhere `--help`-visible, per principle 2, rather than
+living only in `README.md`, is still open — flag it if you touch this
+area.)
+
+## 19. Default output leads with the answer, not the whole response body (new in the QA-report pass)
+
+The default read output for a resource must foreground the handful of
+fields a person actually asked for — status, assignee, summary — as a
+compact line or two, not walk the full nested API payload (avatar sizes,
+`self` URLs, `accountType`, timezone) before reaching them. Before this
+fix, `read-jira-issue`'s markdown, text, and JSON output all rendered the
+identical raw dump — same field count, same noise, just different
+punctuation, with no lean option. `render_issue_markdown` in `jira.py` now
+renders status/assignee/reporter/priority as a single compact line per
+field; `test_jira_reads.py::test_render_issue_markdown_keeps_identity_fields_compact`
+pins this. `--view full`/`--format json` remain how an agent gets the
+complete representation (principle 6); the default should not require
+scrolling to answer the obvious question.
+
 ## Checklist for adding a new command
 
 1. **Decide: new command or new flag?** Apply principle 12 above. If the
@@ -199,7 +313,17 @@ command. If no, new flag.
    `tests/test_cli.py` if it's a new command (not just a new flag).
 9. **Docs** — one example line in `README.md`'s everyday-commands block, one
    row in `ARCHITECTURE.md`'s command table.
-10. **Re-check against principles 1–11** — does `--help` alone explain it?
+10. **Re-check against principles 1–19** — does `--help` alone explain it?
     Does it accept `--format`/`--safe`? Does it preview and confirm before
     writing? Would an agent scripting against it need to know anything this
-    document and `--help` don't already say?
+    document and `--help` don't already say? Does every remote-calling method
+    raise through `_sdk_errors(...)` so a 4xx surfaces the server's own error
+    detail (13)? If it takes an identity value, is there a human-obvious form
+    of it, and is that resolved rather than demanded (14)? If it can accept
+    the same field from two input sources, does it reject the overlap instead
+    of picking a silent winner (15)? If it reports on state, does it check
+    every path that state can come from, not just the interactive one (16)?
+    Does it reject cheaply-checkable-locally input before any network call
+    (17)? Does a genuinely new failure class get its own exit code, added to
+    the README table (18)? Does its default output lead with the fields a
+    person actually asked for (19)?
