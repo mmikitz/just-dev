@@ -424,19 +424,23 @@ than most MCP servers manage, and its exit-code contract (principle 18) is a
 finer-grained error taxonomy than `isError: true`. Compatibility here means
 adopting the schema-and-annotations half, not trading down on the rest.
 
-## Proposed additions to `UX-DESIGN-PRINCIPLES.md`
+## Principles adopted from this pass
 
-Offered in that document's format, if items 1–3 are accepted:
+Recorded in `UX-DESIGN-PRINCIPLES.md` as principles **20–24**, and in its
+new-command checklist. They are targets, not descriptions: 20–23 each name a gap
+that is open in the code today, and 24 pins down something the CLI already gets
+right.
 
-**20. One invocation, one machine-readable result.** Everything a command
-prints to stdout under `--format json` must parse as exactly one JSON document.
-Progress commentary, previews, and warnings go to stderr. A mutation's preview
-is commentary, not a result: `--dry-run` returns it *as* the result, and a
-confirmed run must not interleave it with the real one.
+| # | Principle | Enforces |
+| --- | --- | --- |
+| 20 | One invocation, one machine-readable result | F1, F2 |
+| 21 | A failure is machine-readable too | F3 |
+| 22 | Declare the machine contract; don't only document it | F4, F7, F8 |
+| 23 | Consent is an argument, not an ambient setting | F6 |
+| 24 | Cross-call state is an explicit argument | keeps pagination and the broker boundary (F9) as they are |
 
-**21. Declare the machine contract; don't only document it.** Any fact an
-automated caller needs — a parameter's type, an enum's members, whether a
-command is read-only or destructive or safe to retry — must be available from a
-command, not only from prose or a `help=` sentence. `describe-commands` is that
-command; a new command is not finished until it appears there with its
-annotations. Prose explains; the manifest is the contract.
+`OPEN_ISSUES.md`'s U3 resolution carries a correction from this pass: it named
+`just --list <namespace>` as the flag-discovery path, which prints `[OPTIONS]`
+and no flag names. `ARCHITECTURE.md`'s interface policy now records that a
+confirmed mutation writes its preview to stdout ahead of the result, as an open
+defect against principle 20.

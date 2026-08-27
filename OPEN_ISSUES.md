@@ -10,10 +10,21 @@ that branch's commit and `attach-jira-issue`'s addition for details.
 
 ## U3 — No per-recipe `--help`
 
-**Status: won't fix (resolved 2026-08-27).** `just --list <namespace>` (e.g.
-`just --list jira`) is the supported discovery path for a recipe's flags;
-`just <recipe> --help` is not going to be made to work. Rationale below,
-kept alongside the original analysis for context.
+**Status: won't fix (resolved 2026-08-27).** `just <recipe> --help` is not
+going to be made to work. Rationale below, kept alongside the original
+analysis for context.
+
+**Correction (2026-08-27, MCP tool-contract pass).** This resolution
+originally named `just --list <namespace>` as the supported discovery path
+for a recipe's *flags*. It is not one: `just --list jira` prints the literal
+placeholder `[OPTIONS]` and no flag names at all. What does disclose them is
+`just --show <recipe>` (raw attributes) and `just --dump --dump-format json`
+(structured, and the basis for the manifest principle 22 asks for). Two
+related facts, verified on `just 1.58.0`: `[arg(...)]` accepts `help=` and
+`pattern=`, and this package currently sets neither, so every `help` field in
+the dump is `null` and no enum is validated at the `just` layer. Adding both
+needs no recipe-body change and does not reopen the shebang-branching cost
+below. See `MCP-COMPATIBILITY-ANALYSIS.md`, F4.
 
 **Why won't-fix:** every recipe body in `scripts/devtools/recipes/*.just` is
 today a trivial one-liner that delegates entirely to the Python CLI — none
@@ -80,7 +91,8 @@ in `cli.py`. Making `--help` work means:
    exits 0 and prints the recipe's Typer help text, for at least one
    recipe per integration.
 
-**Alternative considered and adopted:** documenting `just --list jira` (and
-the other namespaces) as the supported discovery path instead — it already
-works per the QA report, requires no code change, and doesn't touch any
-recipe signature. See the resolution at the top of this section.
+**Alternative considered and adopted:** documenting the `just`-level
+discovery paths instead of making `--help` work per recipe — they require no
+code change and don't touch any recipe signature. See the resolution and its
+correction at the top of this section for which paths actually disclose
+flags.

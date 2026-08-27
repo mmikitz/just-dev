@@ -16,7 +16,11 @@ added after a later live-Jira exploratory QA pass (see
 (F1–F3, F6, R5, U2) were fixed in code — the fix commit changed adapters,
 workflows, and the CLI, but left this document unchanged, so the generalizable
 lesson behind each fix wasn't captured anywhere a future change would see it
-before repeating the same mistake with a new command. Each principle below
+before repeating the same mistake with a new command. Principles 20–24 came
+from a later pass that audited the CLI as an agent-facing surface against the
+MCP tool contract (see `MCP-COMPATIBILITY-ANALYSIS.md`); unlike the others they
+name gaps that are still open in the code, so they read as targets rather than
+as descriptions of what already holds. Each principle below
 cites something concrete and checkable in this codebase — a file, a test, or
 an actual command's behavior — rather than an abstract claim.
 
@@ -270,6 +274,59 @@ pins this. `--view full`/`--format json` remain how an agent gets the
 complete representation (principle 6); the default should not require
 scrolling to answer the obvious question.
 
+## 20. One invocation, one machine-readable result (new in the MCP tool-contract pass)
+
+Under `--format json`, everything a command writes to stdout must parse as
+exactly one JSON document. Previews, warnings, and progress commentary are not
+results: they belong on stderr, and `--dry-run` is what returns a preview *as*
+the result. Known violation to fix rather than copy: a confirmed mutation
+currently emits the preview and the result as two documents on stdout, because
+`workflows.py` calls `announce(preview)` even when `--yes` was passed and
+`cli.py` binds `announce` to a stdout emit (`MCP-COMPATIBILITY-ANALYSIS.md`,
+F1/F2).
+
+## 21. A failure is machine-readable too (new in the MCP tool-contract pass)
+
+Principle 18's exit code says *which* class failed; under `--format json` the
+message must say *what* failed in the same structured form a success gets —
+`{"error": {"code", "kind", "message"}}` on stderr, not prose. Principle 13's
+remote error detail is the payload that matters here, and it is unreachable to a
+caller that has to parse English for it. Text and Markdown keep today's line;
+exit codes never change meaning.
+
+## 22. Declare the machine contract; don't only document it (new in the MCP tool-contract pass)
+
+Anything an automated caller needs — a parameter's type, an enum's members,
+whether a command is read-only, destructive, or safe to retry — must be
+obtainable *from a command*, not only from a `help=` sentence. This is principle
+2 applied to the audience that cannot read prose. Two corollaries with current
+counterexamples: one flag name means one type across sibling commands
+(`--fields` is a JSON object on `create-jira-issue` and a comma-separated list
+on the two reads), and a mutation that duplicates on retry says so before it is
+called (`create-jira-issue`, `comment-jira-issue`, and `attach-jira-issue` have
+no idempotency key and nothing that admits it).
+
+## 23. Consent is an argument, not an ambient setting (new in the MCP tool-contract pass)
+
+Principle 9's fail-closed confirmation is only as strong as its narrowest
+bypass. `JUST_DEV_*` variables exist so recipes can carry *data* into the CLI
+without shell interpolation (principle 7); a waived confirmation is not data.
+`_flag_or_environment` currently accepts `JUST_DEV_YES=1` from an inherited
+environment, so one `export` silently un-gates every later mutation with no
+trace in the command line anyone reviews. A waiver that did not come from the
+command line must at minimum announce itself on stderr.
+
+## 24. Cross-call state is an explicit argument (new in the MCP tool-contract pass)
+
+Anything a caller must carry from one invocation to the next is a value the
+command hands back and accepts again — never state the tool remembers on the
+caller's behalf. `search-jira-issues` is the worked example: it returns
+`nextPageToken` and takes `--next-page-token`, so a paged read is reproducible
+from its arguments alone. The credential broker is the deliberate counterpart,
+not a counterexample: its session is unlocked by a human and never travels as
+an argument, which is exactly why the auth lifecycle is not scriptable and
+`show-auth-status` exists to report which state applies.
+
 ## Checklist for adding a new command
 
 1. **Decide: new command or new flag?** Apply principle 12 above. If the
@@ -313,7 +370,7 @@ scrolling to answer the obvious question.
    `tests/test_cli.py` if it's a new command (not just a new flag).
 9. **Docs** — one example line in `README.md`'s everyday-commands block, one
    row in `ARCHITECTURE.md`'s command table.
-10. **Re-check against principles 1–19** — does `--help` alone explain it?
+10. **Re-check against principles 1–24** — does `--help` alone explain it?
     Does it accept `--format`/`--safe`? Does it preview and confirm before
     writing? Would an agent scripting against it need to know anything this
     document and `--help` don't already say? Does every remote-calling method
@@ -326,4 +383,11 @@ scrolling to answer the obvious question.
     Does it reject cheaply-checkable-locally input before any network call
     (17)? Does a genuinely new failure class get its own exit code, added to
     the README table (18)? Does its default output lead with the fields a
-    person actually asked for (19)?
+    person actually asked for (19)? Does one `--format json` invocation write
+    exactly one JSON document to stdout, with any preview on stderr (20)? Does a
+    failure carry its detail structurally, not only as prose (21)? Are its types,
+    enums, and read-only/destructive/retry-safe behavior obtainable from a
+    command rather than only from `help=` text, and does every flag name it
+    reuses keep the type its siblings give it (22)? Does an
+    environment-supplied confirmation waiver announce itself (23)? Does any
+    state it needs across calls travel as an explicit argument (24)?

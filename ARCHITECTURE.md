@@ -145,7 +145,11 @@ fields, URLs, and attachment metadata. It cannot perfectly classify PII in
 arbitrary free text such as descriptions or comments.
 
 Mutating commands retain `--dry-run` and `--yes`; without `--yes`, they show a
-preview and require a TTY confirmation. The broker remains narrowly scoped to a
+preview and require a TTY confirmation. A preview is commentary, not the
+result: `--dry-run` returns it *as* the result, while a confirmed run currently
+writes it to stdout ahead of the real result, which
+`MCP-COMPATIBILITY-ANALYSIS.md` records as an open defect against
+`UX-DESIGN-PRINCIPLES.md` principle 20. The broker remains narrowly scoped to a
 hard allowlist in `execute_operation`, never an open passthrough: Jira
 supports create, read, update, and delete plus assign, comment, and
 transition; Bitbucket supports create and show plus approve, merge, decline,
