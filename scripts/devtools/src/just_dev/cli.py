@@ -18,8 +18,10 @@ from .config import load_project_config, project_root_from_environment
 from .errors import AuthenticationError, DevtoolsError, InputValidationError
 from .jira import (
     parse_includes,
+    prepare_attach_view,
     prepare_issue_view,
     prepare_search_view,
+    render_attach_markdown,
     render_issue_markdown,
     render_search_markdown,
     validate_view,
@@ -726,9 +728,9 @@ def attach_jira_issue(
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
     _set_command_output_options(context, output_format, safe)
-    _execute(
-        context,
-        lambda: (
+
+    def action() -> dict[str, Any] | PreviewResult:
+        result = (
             _runtime(context)
             .service(profile)
             .attach_jira_issue(
@@ -738,7 +740,14 @@ def attach_jira_issue(
                 yes=_flag_or_environment(yes, "JUST_DEV_YES"),
                 announce=lambda preview: _emit(context, {"preview": preview}),
             )
-        ),
+        )
+        return prepare_attach_view(result) if isinstance(result, dict) else result
+
+    _execute(
+        context,
+        action,
+        default_format="markdown",
+        markdown_renderer=render_attach_markdown,
     )
 
 

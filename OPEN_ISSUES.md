@@ -8,6 +8,41 @@ because it is a recipe-syntax-level change, not a bug fix. Everything else
 from that report (F1, F2, F3, F4, F6, R4, R5, U2, F5) has been fixed; see
 that branch's commit and `attach-jira-issue`'s addition for details.
 
+## Fixed findings from the search/attach exploratory pass
+
+`search-jira-issues` and `attach-jira-issue` shipped after the original
+report and were never exercised by it. A follow-up exploratory session
+(`claude/jira-commands-test-coverage-1jown7`) covered both live against
+Jira Cloud and found three defects, all now fixed on this branch:
+
+- **F7 — `search-jira-issues --view full` silently returned empty
+  per-issue data when `--fields` wasn't also given.** `jira_fields_parameter()`
+  omitted the `fields` query parameter for a full view with no explicit
+  fields, which is the correct default for the single-issue read endpoint
+  but not for `search/jql`, whose own default when `fields` is omitted is
+  no fields at all. Fixed by sending an explicit `fields=*all` request
+  instead of omitting the parameter when `view == "full"` and no fields
+  were given.
+- **F8 — `--safe` deleted `attach-jira-issue`'s entire result, not just
+  PII.** `filter_safe_output()`'s redaction regex matched
+  `attachment(?:s)?`/`filename` as a whole-key drop anywhere in the tree,
+  but `attach-jira-issue`'s own result uses those exact names as top-level
+  keys, so `--safe` reduced a successful attach's output to
+  `{"issue_id_or_key": "..."}` — no confirmation anything was attached. The
+  same collision silently emptied `read-jira-issue --include attachments
+  --safe` too. Fixed by scoping the redaction to the genuinely sensitive
+  nested/leaf fields (author, self, content URLs); structural metadata
+  like `id`/`filename` now survives `--safe`.
+- **U6 (medium) — `attach-jira-issue`'s default markdown/text output was a
+  raw API dump, the same U2 gap the original report found for
+  `read-jira-issue`.** With no `--format` given, a successful attach
+  printed the full Jira attachment object — nested `author` with four
+  avatar sizes, `self`/`content` URLs, `accountType`, `timeZone` — before
+  the one line that answers "did it work" (`filename`, `size`). Fixed by
+  giving `attach-jira-issue` a purpose-built one-line renderer
+  (`render_attach_markdown`), the way `render_search_markdown` replaced
+  the raw dump for search results.
+
 ## U3 — No per-recipe `--help`
 
 **Status: won't fix (resolved 2026-08-27).** `just --list <namespace>` (e.g.
