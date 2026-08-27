@@ -50,6 +50,7 @@ invoke the same recipe and remain supported.
 | `just comment-jira-issue KEY COMMENT` | `just jira comment-jira-issue KEY COMMENT` |
 | `just transition-jira-issue KEY STATUS` | `just jira transition-jira-issue KEY STATUS` |
 | `just delete-jira-issue KEY` | `just jira delete-jira-issue KEY` |
+| `just jira-integration-smoke` | `just jira jira-integration-smoke` |
 | `just create-pull-request TITLE` | `just bitbucket create-pull-request TITLE` |
 | `just show-pull-request [ID]` | `just bitbucket show-pull-request [ID]` |
 | `just approve-pull-request PR_ID` | `just bitbucket approve-pull-request PR_ID` |

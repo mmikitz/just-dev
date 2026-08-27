@@ -30,6 +30,7 @@ ALIASES = (
     "comment-jira-issue",
     "transition-jira-issue",
     "delete-jira-issue",
+    "jira-integration-smoke",
     "create-pull-request",
     "show-pull-request",
     "approve-pull-request",
@@ -241,6 +242,7 @@ def test_jira_recipe_exposes_only_the_requested_targets() -> None:
         "comment-jira-issue",
         "transition-jira-issue",
         "delete-jira-issue",
+        "jira-integration-smoke",
     ]
 
 
@@ -388,3 +390,63 @@ def test_merge_pull_request_recipe_forwards_message_and_merge_strategy_flags(jus
 
     assert captured["env"]["JUST_DEV_PR_MESSAGE"] == "Merging after review"
     assert captured["env"]["JUST_DEV_PR_MERGE_STRATEGY"] == "squash"
+
+
+# --- Error paths: `just` itself rejects these before ever invoking `uv`/the Python CLI, so they need no
+# fake-uv stub, no config, and no credentials -- they are pure argument-count / option-name checks against
+# the recipe signatures declared in recipes/jira.just. ---
+
+
+def _run_just(*args: str) -> subprocess.CompletedProcess:
+    # Force typer's rich error rendering to plain text in the subprocess: under CI (GITHUB_ACTIONS=true)
+    # it forces ANSI color on regardless of stderr being a real terminal, and its option highlighter can
+    # split a long option like "--format" across escape codes, breaking plain substring assertions below.
+    env = {**os.environ, "_TYPER_FORCE_DISABLE_TERMINAL": "1"}
+    return subprocess.run(
+        ["just", *args],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+
+
+@requires_just
+@pytest.mark.parametrize(
+    ("args", "takes"),
+    [
+        (("transition-jira-issue",), 2),
+        (("transition-jira-issue", "DEV-1"), 2),
+        (("create-jira-issue",), 2),
+        (("comment-jira-issue", "DEV-1"), 2),
+    ],
+    ids=["transition-zero-args", "transition-one-arg", "create-zero-args", "comment-one-arg"],
+)
+def test_missing_positional_arguments_produce_justs_own_usage_error(args, takes) -> None:
+    completed = _run_just(*args)
+
+    assert completed.returncode != 0
+    assert f"but takes {takes}" in completed.stderr
+    assert "usage:" in completed.stderr
+
+
+@requires_just
+def test_unknown_flag_is_rejected_by_just_before_python_runs() -> None:
+    completed = _run_just("read-jira-issue", "DEV-1", "--frobnicate", "value")
+
+    assert completed.returncode != 0
+    assert "does not have option" in completed.stderr
+    assert "--frobnicate" in completed.stderr
+
+
+@requires_just
+def test_invalid_format_recipe_flag_surfaces_the_global_click_error_with_exit_code_two(tmp_path) -> None:
+    """--format is forwarded as JUST_DEV_FORMAT and only validated by the top-level Typer callback, so
+    an invalid value here fails before config is loaded and exits 2 (a Click usage error), not the 25
+    (InputValidationError) a per-command validation failure would use."""
+    completed = _run_just("read-jira-issue", "DEV-1", "--format", "xml")
+
+    assert completed.returncode != 0
+    assert "exit code 2" in completed.stderr
+    assert "--format" in completed.stderr
