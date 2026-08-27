@@ -16,6 +16,7 @@ from .atlassian import resolve_site_cloud_id
 from .broker import REQUIRED_SCOPES, BrokerManager, CloudIdCache, KeePassProfile, ProfileStore, validate_profile
 from .config import load_project_config, project_root_from_environment
 from .errors import AuthenticationError, DevtoolsError, InputValidationError
+from .introspect import describe_commands as _describe_commands
 from .jira import (
     parse_includes,
     prepare_issue_view,
@@ -191,6 +192,7 @@ def _emit(
     *,
     default_format: str = "text",
     markdown_renderer: Callable[[Any], str] | None = None,
+    err: bool = False,
 ) -> None:
     runtime = _runtime(context)
     data = redact_data(_serialize(value))
@@ -198,11 +200,19 @@ def _emit(
         data = filter_safe_output(data)
     output_format = runtime.output_format or default_format
     if output_format == "json":
-        typer.echo(json.dumps(data, ensure_ascii=False, sort_keys=True))
+        typer.echo(json.dumps(data, ensure_ascii=False, sort_keys=True), err=err)
     elif output_format == "markdown":
-        typer.echo(markdown_renderer(data) if markdown_renderer else render_markdown(data))
+        typer.echo(markdown_renderer(data) if markdown_renderer else render_markdown(data), err=err)
     else:
-        typer.echo(render_text(data))
+        typer.echo(render_text(data), err=err)
+
+
+def _announce_preview(context: typer.Context, preview: Any) -> None:
+    """A mutation's preview is progress commentary, not its result (principle 20):
+    it always goes to stderr, in the same bare shape `--dry-run` returns as the
+    result, so `--format json` stdout carries exactly one JSON document (F1, F2)."""
+
+    _emit(context, preview, err=True)
 
 
 def _execute(
@@ -215,8 +225,28 @@ def _execute(
     try:
         _emit(context, action(), default_format=default_format, markdown_renderer=markdown_renderer)
     except DevtoolsError as error:
-        typer.echo(f"error: {redact_text(error)}", err=True)
+        runtime = _runtime(context)
+        message = redact_text(error)
+        if (runtime.output_format or default_format) == "json":
+            payload = {"error": {"code": error.exit_code, "kind": error.kind, "message": message}}
+            typer.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True), err=True)
+        else:
+            typer.echo(f"error: {message}", err=True)
         raise typer.Exit(code=error.exit_code) from error
+
+
+def _yes_or_environment(yes: bool) -> bool:
+    """The --yes counterpart to `_flag_or_environment`: a waiver sourced from the
+    JUST_DEV_YES environment variable announces itself on stderr, since consent
+    is meant to be an explicit argument, not a silent ambient setting (F6,
+    principle 23). An explicit --yes needs no announcement."""
+
+    if yes:
+        return True
+    waived = _flag_or_environment(False, "JUST_DEV_YES")
+    if waived:
+        typer.echo("confirmation waived by JUST_DEV_YES", err=True)
+    return waived
 
 
 def _argument_or_environment(value: str | None, environment_name: str, label: str) -> str:
@@ -321,6 +351,22 @@ def check_devtools(
 
     _set_command_output_options(context, output_format, safe)
     _execute(context, lambda: _runtime(context).service(require_broker=False).check_devtools())
+
+
+@app.command("describe-commands")
+def describe_commands(
+    context: typer.Context,
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    """List every command as an MCP-shaped tool descriptor: name, description,
+    inputSchema, outputSchema (where stable), and readOnly/destructive/idempotent
+    annotations — the machine-readable manifest `just --list` does not provide (F4)."""
+
+    _set_command_output_options(context, output_format, safe)
+    _execute(context, lambda: {"tools": _describe_commands(app)}, default_format="json")
 
 
 @auth_app.command("configure-auth")
@@ -477,6 +523,8 @@ def create_jira_issue(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Create a new Jira issue from a configured preset."""
+
     _set_command_output_options(context, output_format, safe)
     _execute(
         context,
@@ -489,8 +537,8 @@ def create_jira_issue(
                 description=_optional_value_or_environment(description, "JUST_DEV_JIRA_DESCRIPTION"),
                 fields=_json_object_or_environment(fields, "JUST_DEV_JIRA_FIELDS", "Jira fields"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -519,6 +567,8 @@ def read_jira_issue(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Fetch a single Jira issue by ID or key."""
+
     _set_command_output_options(context, output_format, safe)
 
     def action() -> dict[str, Any]:
@@ -575,6 +625,8 @@ def search_jira_issues(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Search Jira issues by JQL, paginated via --next-page-token."""
+
     _set_command_output_options(context, output_format, safe)
 
     def action() -> dict[str, Any]:
@@ -629,6 +681,8 @@ def update_jira_issue(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Update a Jira issue's summary, description, labels, priority, or other fields."""
+
     _set_command_output_options(context, output_format, safe)
     _execute(
         context,
@@ -643,8 +697,8 @@ def update_jira_issue(
                 priority=_optional_value_or_environment(priority, "JUST_DEV_JIRA_PRIORITY"),
                 fields=_json_object_or_environment(request, "JUST_DEV_JIRA_UPDATE_REQUEST", "Jira update request"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -665,6 +719,8 @@ def assign_jira_issue(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Assign a Jira issue to a user by account ID or email."""
+
     _set_command_output_options(context, output_format, safe)
     _execute(
         context,
@@ -675,8 +731,8 @@ def assign_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 _argument_or_environment(assignee, "JUST_DEV_JIRA_ASSIGNEE", "Assignee account ID or email"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -695,6 +751,8 @@ def comment_jira_issue(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Add a comment to a Jira issue."""
+
     _set_command_output_options(context, output_format, safe)
     _execute(
         context,
@@ -705,8 +763,8 @@ def comment_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 _argument_or_environment(comment, "JUST_DEV_JIRA_COMMENT", "Comment"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -725,6 +783,8 @@ def attach_jira_issue(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Attach a local file to a Jira issue."""
+
     _set_command_output_options(context, output_format, safe)
     _execute(
         context,
@@ -735,8 +795,8 @@ def attach_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 _argument_or_environment(file_path, "JUST_DEV_JIRA_FILE_PATH", "File path"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -755,6 +815,8 @@ def transition_jira_issue(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Move a Jira issue to a named workflow status."""
+
     _set_command_output_options(context, output_format, safe)
     _execute(
         context,
@@ -765,8 +827,8 @@ def transition_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 _argument_or_environment(status, "JUST_DEV_JIRA_STATUS", "Target status"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -787,6 +849,8 @@ def delete_jira_issue(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Delete a Jira issue, optionally with its subtasks."""
+
     _set_command_output_options(context, output_format, safe)
     _execute(
         context,
@@ -797,8 +861,8 @@ def delete_jira_issue(
                 _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
                 delete_subtasks=_flag_or_environment(delete_subtasks, "JUST_DEV_JIRA_DELETE_SUBTASKS"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -837,9 +901,9 @@ def create_pull_request(
                 or ([os.environ["JUST_DEV_PR_REVIEWER"]] if os.environ.get("JUST_DEV_PR_REVIEWER") else []),
                 close_source_branch=_flag_or_environment(close_source_branch, "JUST_DEV_PR_CLOSE_SOURCE_BRANCH"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                yes=_yes_or_environment(yes),
                 no_verify=_flag_or_environment(no_verify, "JUST_DEV_NO_VERIFY"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -881,8 +945,8 @@ def approve_pull_request(
             .approve_pull_request(
                 _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -909,8 +973,8 @@ def decline_pull_request(
             .decline_pull_request(
                 _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -939,8 +1003,8 @@ def comment_pull_request(
                 _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
                 _argument_or_environment(comment, "JUST_DEV_PR_COMMENT", "Comment"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -969,8 +1033,8 @@ def add_pull_request_reviewer(
                 _argument_or_environment(pull_request_id, "JUST_DEV_PR_ID", "Pull request ID"),
                 _argument_or_environment(reviewer, "JUST_DEV_PR_REVIEWER_NAME", "Reviewer"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -1009,8 +1073,8 @@ def merge_pull_request(
                 merge_strategy=_option_or_environment(merge_strategy, "JUST_DEV_PR_MERGE_STRATEGY", "merge_commit"),
                 close_source_branch=_flag_or_environment(close_source_branch, "JUST_DEV_PR_CLOSE_SOURCE_BRANCH"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -1042,8 +1106,8 @@ def run_build(
                 parameters=parameter
                 or ([os.environ["JUST_DEV_BUILD_PARAMETER"]] if os.environ.get("JUST_DEV_BUILD_PARAMETER") else []),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda preview: _emit(context, {"preview": preview}),
+                yes=_yes_or_environment(yes),
+                announce=lambda preview: _announce_preview(context, preview),
             )
         ),
     )
@@ -1128,8 +1192,8 @@ def publish_release_notes(
                 path,
                 preset_name=_option_or_environment(preset, "JUST_DEV_CONFLUENCE_PRESET", "release-notes"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
-                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
-                announce=lambda page: _emit(context, {"preview": page}),
+                yes=_yes_or_environment(yes),
+                announce=lambda page: _announce_preview(context, page),
             )
         )
 

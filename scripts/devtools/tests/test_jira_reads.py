@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from just_dev.jira import jira_fields_parameter, parse_includes, prepare_issue_view, render_issue_markdown
-from just_dev.rendering import filter_safe_output, render
+from just_dev.rendering import OMITTED, filter_safe_output, render
 
 
 def _issue() -> dict:
@@ -64,9 +64,9 @@ def test_safe_filter_removes_structural_personal_data_urls_and_attachment_metada
     )
 
     assert "self" not in safe
-    assert "assignee" not in safe["fields"]
-    assert "reporter" not in safe["fields"]
-    assert "attachment" not in safe["fields"]
-    assert "author" not in safe["fields"]["comment"]["comments"][0]
+    assert safe["fields"]["assignee"] == OMITTED
+    assert safe["fields"]["reporter"] == OMITTED
+    assert safe["fields"]["attachment"] == OMITTED
+    assert safe["fields"]["comment"]["comments"][0]["author"] == OMITTED
     assert safe["fields"]["description"] == "Customer says the login button fails."
     assert "Customer says" in render(safe, "markdown")

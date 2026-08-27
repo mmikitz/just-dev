@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+_CAMEL_WORD = re.compile(r"(?<!^)(?=[A-Z])")
 
 
 @dataclass(eq=False)
@@ -11,6 +14,13 @@ class DevtoolsError(Exception):
 
     message: str
     exit_code: int = 70
+
+    @property
+    def kind(self) -> str:
+        """A stable, machine-readable failure category for `--format json` (F3)."""
+
+        name = type(self).__name__.removesuffix("Error") or type(self).__name__
+        return _CAMEL_WORD.sub("_", name).lower()
 
     def __str__(self) -> str:
         return self.message

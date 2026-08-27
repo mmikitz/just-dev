@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-_DROP = object()
+OMITTED = "[OMITTED]"
 _SAFE_KEY = re.compile(
     r"(?:account(?:id)?|email(?:address)?|displayname|avatar(?:urls?)?|"
     r"assignee|reporter|creator|author|user(?:s)?|identity|owner|watcher(?:s)?|voters?|"
@@ -25,36 +25,28 @@ def _safe_key(key: object) -> bool:
 
 
 def filter_safe_output(value: Any) -> Any:
-    """Omit structural identifiers and URL/attachment metadata from result data.
+    """Redact structural identifiers and URL/attachment metadata from result data.
+
+    A redacted key or standalone URL value is replaced with the ``OMITTED``
+    sentinel rather than deleted, so the key set a caller sees — and any
+    declared ``outputSchema`` — is unaffected by ``--safe``, and a caller can
+    tell "redacted by policy" apart from "absent in the source data" (F5).
 
     This intentionally acts on fields and standalone URL values, not arbitrary
     prose. A description or comment can still contain personal information, so
     callers must not present ``--safe`` as a complete PII classifier.
     """
 
-    filtered = _filter_safe(value)
-    return None if filtered is _DROP else filtered
+    return _filter_safe(value)
 
 
 def _filter_safe(value: Any) -> Any:
     if isinstance(value, Mapping):
-        result: dict[str, Any] = {}
-        for key, item in value.items():
-            if _safe_key(key):
-                continue
-            filtered = _filter_safe(item)
-            if filtered is not _DROP:
-                result[str(key)] = filtered
-        return result
+        return {str(key): OMITTED if _safe_key(key) else _filter_safe(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
-        items: list[Any] = []
-        for item in value:
-            filtered = _filter_safe(item)
-            if filtered is not _DROP:
-                items.append(filtered)
-        return items
+        return [_filter_safe(item) for item in value]
     if isinstance(value, str) and _URL_VALUE.fullmatch(value.strip()):
-        return _DROP
+        return OMITTED
     return value
 
 

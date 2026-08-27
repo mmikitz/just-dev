@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from typer.testing import CliRunner
 from just_dev.broker import KeePassProfile, ProfileStore
 from just_dev.cli import Runtime, _CiOperationClient, _LazyBroker, app
 from just_dev.errors import ConflictError, DevtoolsError
+from just_dev.models import PreviewResult
 
 
 def test_preview_release_notes_needs_no_broker(config, tmp_path, monkeypatch) -> None:
@@ -283,6 +285,76 @@ verify_commands = ["true"]
     assert "merge pull request" in result.output
 
 
+def test_confirmed_mutation_puts_exactly_one_json_document_on_stdout(monkeypatch) -> None:
+    """F1/F2: a confirmed (--yes) mutation's preview goes to stderr in the same
+    bare shape --dry-run returns as its result, so --format json's stdout is
+    exactly one parseable JSON document (principle 20), not two."""
+
+    class FakeService:
+        def create_jira_issue(self, preset, summary, **kwargs):
+            announce = kwargs["announce"]
+            announce(PreviewResult(action="create Jira issue", details={"preset": preset, "summary": summary}))
+            return {"id": "10001", "key": "DEV-1"}
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+
+    result = CliRunner().invoke(
+        app,
+        ["--format", "json", "jira", "create-jira-issue", "bug", "Summary", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"id": "10001", "key": "DEV-1"}
+    preview = json.loads(result.stderr)
+    assert preview == {"action": "create Jira issue", "details": {"preset": "bug", "summary": "Summary"}}
+
+
+def test_explicit_yes_does_not_announce_a_waiver(monkeypatch) -> None:
+    class FakeService:
+        def create_jira_issue(self, preset, summary, **kwargs):
+            kwargs["announce"](PreviewResult(action="create Jira issue", details={}))
+            return {"id": "10001", "key": "DEV-1"}
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+
+    result = CliRunner().invoke(app, ["jira", "create-jira-issue", "bug", "Summary", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "confirmation waived" not in result.stderr
+
+
+def test_just_dev_yes_environment_variable_announces_the_waiver_on_stderr(monkeypatch) -> None:
+    """F6/principle 23: a mutation's confirmation waived by the JUST_DEV_YES
+    environment variable rather than an explicit --yes flag says so on stderr."""
+
+    class FakeService:
+        def create_jira_issue(self, preset, summary, **kwargs):
+            kwargs["announce"](PreviewResult(action="create Jira issue", details={}))
+            return {"id": "10001", "key": "DEV-1"}
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+    monkeypatch.setenv("JUST_DEV_YES", "1")
+
+    result = CliRunner().invoke(app, ["jira", "create-jira-issue", "bug", "Summary"])
+
+    assert result.exit_code == 0, result.output
+    assert "confirmation waived by JUST_DEV_YES" in result.stderr
+
+
+def test_describe_commands_lists_every_command_as_an_mcp_shaped_tool(monkeypatch) -> None:
+    result = CliRunner().invoke(app, ["--format", "json", "describe-commands"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    tools = {tool["name"]: tool for tool in payload["tools"]}
+    assert "jira.read-jira-issue" in tools
+    read_issue = tools["jira.read-jira-issue"]
+    assert read_issue["annotations"] == {"readOnly": True, "destructive": False, "idempotent": True}
+    assert "issue_id_or_key" in read_issue["inputSchema"]["properties"]
+    assert read_issue["outputSchema"]["properties"]["fields"] == {"type": "object"}
+    assert tools["jira.create-jira-issue"]["inputSchema"]["properties"]["fields"]["type"] == "object"
+
+
 def test_jira_read_defaults_to_markdown_and_applies_view_and_safe_output(monkeypatch) -> None:
     class FakeService:
         def __init__(self) -> None:
@@ -339,7 +411,7 @@ def test_jira_read_defaults_to_markdown_and_applies_view_and_safe_output(monkeyp
     )
     assert safe_json.exit_code == 0, safe_json.output
     assert "account-1" not in safe_json.output
-    assert "assignee" not in safe_json.output
+    assert '"assignee": "[OMITTED]"' in safe_json.output
     assert "https://" not in safe_json.output
 
 

@@ -9,6 +9,8 @@ the full sentence, since exact wording is expected to keep improving independent
 
 from __future__ import annotations
 
+import json
+
 from typer.testing import CliRunner
 
 from just_dev.cli import app
@@ -115,6 +117,40 @@ def test_search_jira_issues_rejects_an_unknown_view_value(tmp_path, monkeypatch)
 
     assert result.exit_code == 25, result.output
     assert "--view" in result.output
+
+
+def test_read_jira_issue_reports_a_structured_json_error_under_format_json(tmp_path, monkeypatch) -> None:
+    """F3: under --format json, a failure is one JSON document on stderr naming the
+    exit code and a stable, machine-readable `kind`, not just prose (principle 21)."""
+    config_path = _config_path(tmp_path, monkeypatch)
+
+    result = CliRunner().invoke(
+        app,
+        ["--config", str(config_path), "--format", "json", "jira", "read-jira-issue", "not a key"],
+    )
+
+    assert result.exit_code == 25, result.output
+    assert result.stdout == ""
+    payload = json.loads(result.stderr)
+    assert payload == {
+        "error": {
+            "code": 25,
+            "kind": "input_validation",
+            "message": payload["error"]["message"],
+        }
+    }
+    assert "not a key" in payload["error"]["message"]
+
+
+def test_read_jira_issue_keeps_the_plain_text_error_line_outside_json_format(tmp_path, monkeypatch) -> None:
+    config_path = _config_path(tmp_path, monkeypatch)
+
+    result = CliRunner().invoke(app, ["--config", str(config_path), "jira", "read-jira-issue", "not a key"])
+
+    assert result.exit_code == 25, result.output
+    assert result.stdout == ""
+    assert result.stderr.startswith("error: ")
+    assert not result.stderr.strip().startswith("{")
 
 
 def test_search_jira_issues_rejects_an_out_of_range_limit(tmp_path, monkeypatch) -> None:

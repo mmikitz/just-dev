@@ -1,0 +1,181 @@
+"""Build MCP-shaped tool descriptors for every CLI command via Typer introspection.
+
+Each command becomes one descriptor: a dotted `namespace.command` name (matching
+the collision prefix a `just <namespace> <command>` invocation already uses),
+its help text as `description`, an `inputSchema` built from its Typer options
+and arguments, an `outputSchema` where the result shape is genuinely stable,
+and `annotations` (`readOnly`/`destructive`/`idempotent`) describing what the
+command does to remote state. This does not make the CLI speak MCP's wire
+protocol; it is the one machine-readable manifest an agent (MCP-shaped or not)
+needs in order to discover the command surface without parsing `--help` text.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import typer.main
+
+_JSON_TYPES = {
+    "str": "string",
+    "text": "string",
+    "int": "integer",
+    "integer": "integer",
+    "float": "number",
+    "boolean": "boolean",
+    "path": "string",
+    "uuid": "string",
+}
+
+# Spec defaults are readOnly=false, destructive=true, idempotent=false; every
+# command below is annotated explicitly rather than relying on that default,
+# since an unannotated tool tells an agent nothing and the default is the
+# risky assumption. The nine Jira commands' values are the exact table derived
+# in the MCP tool-contract compatibility analysis (does the command call
+# `confirm_mutation`? does a retry duplicate, safely no-op, or fail without
+# side effects?); every other command applies the same two questions.
+ANNOTATIONS: dict[str, dict[str, bool]] = {
+    "check-devtools": {"readOnly": True, "destructive": False, "idempotent": True},
+    "describe-commands": {"readOnly": True, "destructive": False, "idempotent": True},
+    "auth.configure-auth": {"readOnly": False, "destructive": False, "idempotent": True},
+    "auth.unlock-secrets": {"readOnly": False, "destructive": False, "idempotent": True},
+    "auth.show-auth-status": {"readOnly": True, "destructive": False, "idempotent": True},
+    "auth.lock-secrets": {"readOnly": False, "destructive": False, "idempotent": True},
+    "jira.create-jira-issue": {"readOnly": False, "destructive": False, "idempotent": False},
+    "jira.read-jira-issue": {"readOnly": True, "destructive": False, "idempotent": True},
+    "jira.search-jira-issues": {"readOnly": True, "destructive": False, "idempotent": True},
+    "jira.update-jira-issue": {"readOnly": False, "destructive": True, "idempotent": True},
+    "jira.assign-jira-issue": {"readOnly": False, "destructive": True, "idempotent": True},
+    "jira.comment-jira-issue": {"readOnly": False, "destructive": False, "idempotent": False},
+    "jira.attach-jira-issue": {"readOnly": False, "destructive": False, "idempotent": False},
+    "jira.transition-jira-issue": {"readOnly": False, "destructive": True, "idempotent": True},
+    "jira.delete-jira-issue": {"readOnly": False, "destructive": True, "idempotent": True},
+    "bitbucket.create-pull-request": {"readOnly": False, "destructive": False, "idempotent": False},
+    "bitbucket.show-pull-request": {"readOnly": True, "destructive": False, "idempotent": True},
+    "bitbucket.approve-pull-request": {"readOnly": False, "destructive": False, "idempotent": False},
+    "bitbucket.decline-pull-request": {"readOnly": False, "destructive": True, "idempotent": False},
+    "bitbucket.comment-pull-request": {"readOnly": False, "destructive": False, "idempotent": False},
+    "bitbucket.add-pull-request-reviewer": {"readOnly": False, "destructive": False, "idempotent": False},
+    "bitbucket.merge-pull-request": {"readOnly": False, "destructive": True, "idempotent": False},
+    "jenkins.run-build": {"readOnly": False, "destructive": False, "idempotent": False},
+    "jenkins.show-build-status": {"readOnly": True, "destructive": False, "idempotent": True},
+    "confluence.preview-release-notes": {"readOnly": True, "destructive": False, "idempotent": True},
+    "confluence.publish-release-notes": {"readOnly": False, "destructive": True, "idempotent": False},
+    "project.verify-project": {"readOnly": True, "destructive": False, "idempotent": True},
+    "project.run-ci": {"readOnly": True, "destructive": False, "idempotent": True},
+}
+
+_DEFAULT_ANNOTATIONS = {"readOnly": False, "destructive": True, "idempotent": False}
+
+# Per-parameter JSON Schema overrides for shapes a param's Click type alone
+# can't express: a true enum (`--view`), a comma-separated finite vocabulary
+# (`--include`), and the one flag whose type genuinely differs between sibling
+# commands (F8: `--fields` is a JSON object on create/update, a comma-separated
+# field list on read/search — left as the default string type there, called
+# out via its own `help` text rather than silently declared as an array).
+SCHEMA_OVERRIDES: dict[str, dict[str, dict[str, Any]]] = {
+    "jira.create-jira-issue": {
+        "fields": {
+            "type": "object",
+            "description": "Optional JSON object merged into 'fields', e.g. for custom fields.",
+        },
+    },
+    "jira.update-jira-issue": {
+        "request": {
+            "type": "object",
+            "description": (
+                "Optional JSON object merged into the Edit issue request, e.g. custom fields or update operations."
+            ),
+        },
+    },
+    "jira.read-jira-issue": {
+        "view": {"type": "string", "enum": ["summary", "full"], "description": "Issue view: summary or full."},
+        "include": {
+            "type": "array",
+            "items": {"enum": ["links", "attachments", "comments"]},
+            "description": "Optional sections; comma-separated on the command line.",
+        },
+    },
+    "jira.search-jira-issues": {
+        "view": {"type": "string", "enum": ["summary", "full"], "description": "Issue view: summary or full."},
+    },
+}
+
+# outputSchema is declared only where the shape is stable regardless of what a
+# specific issue happens to contain (F5): the default summary view and the
+# search envelope. Jira's own `--view full` representation is intentionally
+# left undeclared rather than pinned to whatever the API happens to return.
+OUTPUT_SCHEMAS: dict[str, dict[str, Any]] = {
+    "jira.read-jira-issue": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string"},
+            "key": {"type": "string"},
+            "fields": {"type": "object"},
+        },
+        "required": ["fields"],
+    },
+    "jira.search-jira-issues": {
+        "type": "object",
+        "properties": {
+            "issues": {"type": "array", "items": {"type": "object"}},
+            "nextPageToken": {"type": "string"},
+            "isLast": {"type": "boolean"},
+            "total": {"type": "integer"},
+        },
+        "required": ["issues"],
+    },
+}
+
+
+def _json_type(param: Any) -> str:
+    type_name = getattr(param.type, "name", "") or ""
+    return _JSON_TYPES.get(type_name, "string")
+
+
+def _param_schema(dotted_name: str, param: Any) -> dict[str, Any]:
+    override = SCHEMA_OVERRIDES.get(dotted_name, {}).get(param.name)
+    if override is not None:
+        schema = dict(override)
+    elif getattr(param, "multiple", False):
+        schema = {"type": "array", "items": {"type": _json_type(param)}}
+    else:
+        schema = {"type": _json_type(param)}
+    if param.help and "description" not in schema:
+        schema["description"] = param.help
+    return schema
+
+
+def _input_schema(dotted_name: str, command: Any) -> dict[str, Any]:
+    properties = {param.name: _param_schema(dotted_name, param) for param in command.params}
+    required = sorted(param.name for param in command.params if param.required)
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
+
+
+def _descriptor(dotted_name: str, command: Any) -> dict[str, Any]:
+    return {
+        "name": dotted_name,
+        "description": command.help or "",
+        "inputSchema": _input_schema(dotted_name, command),
+        **({"outputSchema": OUTPUT_SCHEMAS[dotted_name]} if dotted_name in OUTPUT_SCHEMAS else {}),
+        "annotations": ANNOTATIONS.get(dotted_name, _DEFAULT_ANNOTATIONS),
+    }
+
+
+def _walk(group: Any, prefix: str, out: list[dict[str, Any]]) -> None:
+    for name, sub in group.commands.items():
+        if hasattr(sub, "commands"):
+            _walk(sub, f"{prefix}{name}.", out)
+        else:
+            out.append(_descriptor(f"{prefix}{name}", sub))
+
+
+def describe_commands(app: typer.main.Typer) -> list[dict[str, Any]]:
+    """Build one MCP-shaped tool descriptor per command, sorted by name."""
+
+    out: list[dict[str, Any]] = []
+    _walk(typer.main.get_command(app), "", out)
+    return sorted(out, key=lambda item: str(item["name"]))

@@ -10,6 +10,7 @@ mod confluence 'recipes/confluence.just'
 mod project 'recipes/project.just'
 
 alias check-devtools := devtools::check-devtools
+alias describe-commands := devtools::describe-commands
 alias qa := quality::qa
 alias check-changed := quality::check-changed
 alias install-hooks := quality::install-hooks
