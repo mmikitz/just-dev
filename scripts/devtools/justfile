@@ -22,6 +22,7 @@ alias read-jira-issue := jira::read-jira-issue
 alias update-jira-issue := jira::update-jira-issue
 alias assign-jira-issue := jira::assign-jira-issue
 alias comment-jira-issue := jira::comment-jira-issue
+alias attach-jira-issue := jira::attach-jira-issue
 alias transition-jira-issue := jira::transition-jira-issue
 alias delete-jira-issue := jira::delete-jira-issue
 alias jira-integration-smoke := jira::jira-integration-smoke

@@ -641,6 +641,36 @@ def comment_jira_issue(
     )
 
 
+@jira_app.command("attach-jira-issue")
+def attach_jira_issue(
+    context: typer.Context,
+    issue_id_or_key: Annotated[str | None, typer.Argument(help="Issue ID or key, e.g. ABC-123.")] = None,
+    file_path: Annotated[str | None, typer.Argument(help="Path to the local file to attach.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the request without writing.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation.")] = False,
+    profile: Annotated[str, typer.Option("--profile", help="Local auth profile.")] = "default",
+    output_format: Annotated[
+        str | None, typer.Option("--format", help="Output format: text, markdown, or json.")
+    ] = None,
+    safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
+) -> None:
+    _set_command_output_options(context, output_format, safe)
+    _execute(
+        context,
+        lambda: (
+            _runtime(context)
+            .service(profile)
+            .attach_jira_issue(
+                _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
+                _argument_or_environment(file_path, "JUST_DEV_JIRA_FILE_PATH", "File path"),
+                dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
+                yes=_flag_or_environment(yes, "JUST_DEV_YES"),
+                announce=lambda preview: _emit(context, {"preview": preview}),
+            )
+        ),
+    )
+
+
 @jira_app.command("transition-jira-issue")
 def transition_jira_issue(
     context: typer.Context,

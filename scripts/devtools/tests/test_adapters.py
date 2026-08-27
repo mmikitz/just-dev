@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 import pytest
 from atlassian.errors import ApiPermissionError
 from requests.exceptions import RequestException, Timeout
@@ -22,6 +24,7 @@ class FakeJira:
         self.get_calls: list[tuple] = []
         self.put_calls: list[tuple] = []
         self.delete_calls: list[tuple] = []
+        self.attachment_calls: list[tuple] = []
 
     def resource_url(self, resource, api_root=None, api_version=None):
         return f"rest/api/3/{resource}"
@@ -48,6 +51,10 @@ class FakeJira:
     def delete(self, path, *, params=None):
         self.delete_calls.append((path, params))
         return None
+
+    def add_attachment_object(self, issue_key, attachment):
+        self.attachment_calls.append((issue_key, attachment.name, attachment.read()))
+        return [{"id": "20001", "filename": attachment.name}]
 
 
 class FakeBitbucket:
@@ -245,6 +252,22 @@ def test_jira_adapter_assigns_comments_lists_transitions_and_transitions_issue(m
         ("rest/api/3/issue/DEV-1/transitions", {"transition": {"id": "31"}}, None),
     ]
     assert client.get_calls == [("rest/api/3/issue/DEV-1/transitions", None)]
+
+
+def test_jira_adapter_attach_file_decodes_base64_and_posts_the_named_attachment(monkeypatch) -> None:
+    client = FakeJira()
+    monkeypatch.setattr(adapters, "Jira", lambda *args, **kwargs: client)
+    adapter = JiraAdapter("cloud id")
+    encoded = base64.b64encode(b"file contents").decode("ascii")
+
+    result = adapter.attach_file("secret", "DEV-1", "notes.txt", encoded)
+
+    assert result == {
+        "issue_id_or_key": "DEV-1",
+        "filename": "notes.txt",
+        "attachments": [{"id": "20001", "filename": "notes.txt"}],
+    }
+    assert client.attachment_calls == [("DEV-1", "notes.txt", b"file contents")]
 
 
 def test_jira_adapter_assign_and_transition_fall_back_when_jira_returns_no_content() -> None:

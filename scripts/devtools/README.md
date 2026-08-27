@@ -161,6 +161,7 @@ just update-jira-issue ABC-123 '{"update":{"issuelinks":[{"add":{"type":{"name":
 just assign-jira-issue ABC-123 --assignee 5b10a2844c20165700ede21g
 just assign-jira-issue ABC-123 --assignee jane.doe@example.com
 just comment-jira-issue ABC-123 "Deployed to staging."
+just attach-jira-issue ABC-123 ./screenshot.png
 just transition-jira-issue ABC-123 "Done"
 just delete-jira-issue ABC-123 --delete-subtasks
 just create-pull-request "Title" --description "What changed and why" --reviewer alice --reviewer bob

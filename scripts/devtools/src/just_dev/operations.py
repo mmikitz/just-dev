@@ -139,6 +139,13 @@ def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mappin
                 str(payload["issue_id_or_key"]),
                 {"body": _jira_adf_document(str(payload["comment"]))},
             )
+        elif operation == "jira.attach_file":
+            result = JiraAdapter(config.atlassian.cloud_id).attach_file(
+                _token(tokens, "jira", ci=ci),
+                str(payload["issue_id_or_key"]),
+                str(payload["filename"]),
+                str(payload["content_b64"]),
+            )
         elif operation == "jira.list_transitions":
             result = JiraAdapter(config.atlassian.cloud_id).list_transitions(
                 _token(tokens, "jira", ci=ci),

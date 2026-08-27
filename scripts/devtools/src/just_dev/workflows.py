@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import shutil
@@ -393,6 +394,47 @@ class DevtoolsService:
         confirm_mutation("comment on the Jira issue", yes=yes)
         return self.broker.invoke(
             "jira.comment_issue", self._payload(require_atlassian=True, issue_id_or_key=key, comment=comment)
+        )
+
+    _JIRA_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024  # Jira Cloud's own default attachment size limit.
+
+    def attach_jira_issue(
+        self,
+        issue_id_or_key: str,
+        file_path: str,
+        *,
+        dry_run: bool = False,
+        yes: bool = False,
+        announce: Callable[[PreviewResult], None] | None = None,
+    ) -> dict[str, Any] | PreviewResult:
+        self._validate_atlassian()
+        key = self._jira_issue_id_or_key(issue_id_or_key)
+        path = Path(file_path)
+        if not path.is_file():
+            raise InputValidationError(f"'{file_path}' does not exist or is not a file.")
+        size_bytes = path.stat().st_size
+        if size_bytes > self._JIRA_MAX_ATTACHMENT_BYTES:
+            raise InputValidationError(
+                f"'{file_path}' is {size_bytes} bytes, larger than the 25 MB Jira attachment size limit."
+            )
+        preview = PreviewResult(
+            action="attach file to Jira issue",
+            details={
+                "issue_id_or_key": key,
+                "file_path": str(path),
+                "filename": path.name,
+                "size_bytes": size_bytes,
+            },
+        )
+        if dry_run:
+            return preview
+        if announce:
+            announce(preview)
+        confirm_mutation("attach the file to the Jira issue", yes=yes)
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return self.broker.invoke(
+            "jira.attach_file",
+            self._payload(require_atlassian=True, issue_id_or_key=key, filename=path.name, content_b64=encoded),
         )
 
     def transition_jira_issue(
