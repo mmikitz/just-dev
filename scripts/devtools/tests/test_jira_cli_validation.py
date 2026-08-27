@@ -41,9 +41,14 @@ def _config_path(tmp_path, monkeypatch):
     return config_path
 
 
-def test_global_format_rejects_an_unknown_value_before_any_config_is_loaded(tmp_path) -> None:
+def test_global_format_rejects_an_unknown_value_before_any_config_is_loaded(tmp_path, monkeypatch) -> None:
     # Deliberately no --config and no JUST_DEV_PROJECT_ROOT: the top-level --format check runs before
     # Runtime (and therefore config loading) is constructed, so this must fail without touching either.
+    # Force typer's rich error rendering to plain text: under CI (GITHUB_ACTIONS=true) it forces ANSI
+    # color on regardless of the captured stream being a real terminal, and its option highlighter
+    # inserts escape codes inside "--format" (matching the trailing "-format" as a short option before
+    # the full "--format" match), which breaks a plain substring check.
+    monkeypatch.setenv("_TYPER_FORCE_DISABLE_TERMINAL", "1")
     result = CliRunner().invoke(app, ["--format", "xml", "jira", "read-jira-issue", "DEV-1"])
 
     assert result.exit_code == 2, result.output

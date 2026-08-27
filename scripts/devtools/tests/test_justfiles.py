@@ -398,12 +398,17 @@ def test_merge_pull_request_recipe_forwards_message_and_merge_strategy_flags(jus
 
 
 def _run_just(*args: str) -> subprocess.CompletedProcess:
+    # Force typer's rich error rendering to plain text in the subprocess: under CI (GITHUB_ACTIONS=true)
+    # it forces ANSI color on regardless of stderr being a real terminal, and its option highlighter can
+    # split a long option like "--format" across escape codes, breaking plain substring assertions below.
+    env = {**os.environ, "_TYPER_FORCE_DISABLE_TERMINAL": "1"}
     return subprocess.run(
         ["just", *args],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         timeout=30,
+        env=env,
     )
 
 
