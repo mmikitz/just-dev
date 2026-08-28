@@ -49,7 +49,11 @@ ANNOTATIONS: dict[str, dict[str, bool]] = {
     "jira.comment-jira-issue": {"readOnly": False, "destructive": False, "idempotent": False},
     "jira.attach-jira-issue": {"readOnly": False, "destructive": False, "idempotent": False},
     "jira.transition-jira-issue": {"readOnly": False, "destructive": True, "idempotent": True},
-    "jira.delete-jira-issue": {"readOnly": False, "destructive": True, "idempotent": True},
+    # Not idempotent (R3): Jira returns 404 on delete whether the issue was already deleted or
+    # never existed, so a retry after a dropped connection can't tell "already gone" from
+    # "never existed" -- a blind retry risks silently no-oping on a re-used/typo'd key instead
+    # of surfacing the real problem.
+    "jira.delete-jira-issue": {"readOnly": False, "destructive": True, "idempotent": False},
     "bitbucket.create-pull-request": {"readOnly": False, "destructive": False, "idempotent": False},
     "bitbucket.show-pull-request": {"readOnly": True, "destructive": False, "idempotent": True},
     "bitbucket.approve-pull-request": {"readOnly": False, "destructive": False, "idempotent": False},

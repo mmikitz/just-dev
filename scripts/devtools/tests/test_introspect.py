@@ -32,7 +32,7 @@ def test_jira_annotations_match_the_compatibility_analysis_table() -> None:
     assert _tool("jira.delete-jira-issue")["annotations"] == {
         "readOnly": False,
         "destructive": True,
-        "idempotent": True,
+        "idempotent": False,
     }
 
 

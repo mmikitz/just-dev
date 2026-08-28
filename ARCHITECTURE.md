@@ -155,3 +155,12 @@ comment, and add-reviewer; Jenkins accepts named allowlisted presets and
 parameters; and Confluence writes only versioned preset pages. See
 `UX-DESIGN-PRINCIPLES.md` for the principle governing when a capability
 becomes a new command versus a new flag on an existing one.
+
+`describe-commands`' `annotations` (`src/just_dev/introspect.py`) mark
+`jira.delete-jira-issue` destructive and *not* idempotent, unlike the other
+destructive Jira mutations. Jira's delete endpoint returns 404 whether the
+issue was already deleted or never existed, so a retry after a dropped
+connection can't tell those two cases apart; annotating it idempotent would
+tell a caller a blind retry is always safe, when it can just as easily mask a
+reused or mistyped key behind an apparently-successful no-op instead of
+surfacing the real problem.
