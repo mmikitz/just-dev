@@ -1,5 +1,6 @@
 # Local tool/runtime state
 .claude/scheduled_tasks.lock
+.claude/worktrees/
 
 # Python tooling
 .venv/
