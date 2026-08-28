@@ -385,7 +385,7 @@ verify_commands = ["true"]
         calls.append(operation)
         return {"transitions": [{"id": "31", "to": {"name": "Done"}}]}
 
-    monkeypatch.setattr("just_dev.cli.execute_operation", fake_execute)
+    monkeypatch.setattr("just_dev.operations.execute_operation", fake_execute)
 
     result = CliRunner().invoke(
         app,
