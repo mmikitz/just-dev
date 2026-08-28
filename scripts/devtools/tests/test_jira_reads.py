@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+from just_dev.errors import InputValidationError
 from just_dev.jira import jira_fields_parameter, parse_includes, prepare_issue_view, render_issue_markdown
 from just_dev.rendering import OMITTED, filter_safe_output, render
 
@@ -52,6 +55,63 @@ def test_jira_full_view_keeps_regular_fields_but_requires_explicit_bulky_include
     assert "attachment" not in view["fields"]
     assert "comment" not in view["fields"]
     assert "issuelinks" not in view["fields"]
+
+
+def test_jira_summary_view_carries_expand_keys_through_when_present() -> None:
+    issue = _issue()
+    issue["changelog"] = {"histories": [{"id": "10050", "items": []}]}
+    issue["names"] = {"summary": "Summary"}
+    issue["schema"] = {"summary": {"type": "string", "system": "summary"}}
+
+    view = prepare_issue_view(issue, view="summary")
+
+    assert view["changelog"] == {"histories": [{"id": "10050", "items": []}]}
+    assert view["names"] == {"summary": "Summary"}
+    assert view["schema"] == {"summary": {"type": "string", "system": "summary"}}
+
+
+def test_jira_summary_view_has_no_expand_keys_when_none_were_requested() -> None:
+    # --expand only ever puts changelog/names/schema on the raw response, so a
+    # plain issue (no --expand) must come back with exactly id/key/fields and
+    # nothing else, unchanged from before F3.
+    view = prepare_issue_view(_issue(), view="summary")
+
+    assert set(view) == {"id", "key", "fields"}
+
+
+def _minimal_issue() -> dict:
+    return {
+        "id": "10002",
+        "key": "DEV-2",
+        "fields": {"summary": "Only summary came back"},
+    }
+
+
+def test_jira_summary_view_rejects_a_fields_typo_absent_from_the_response() -> None:
+    with pytest.raises(InputValidationError, match="typoField"):
+        prepare_issue_view(_minimal_issue(), fields="summary,typoField", view="summary")
+
+
+def test_jira_summary_view_fields_validation_survives_a_non_mapping_fields_payload() -> None:
+    issue = {"id": "10003", "key": "DEV-3"}  # no "fields" key at all
+
+    with pytest.raises(InputValidationError, match="typoField"):
+        prepare_issue_view(issue, fields="typoField", view="summary")
+
+
+def test_jira_summary_view_does_not_flag_a_field_only_suppressed_by_missing_include() -> None:
+    # "comment" is present in the raw Jira response but --include comments was
+    # not passed, so the bulky-section policy (not a typo) is why it is
+    # missing from the result; --fields validation must not raise for it.
+    view = prepare_issue_view(_issue(), fields="comment", view="summary")
+
+    assert view["fields"] == {}
+
+
+def test_jira_summary_view_default_fields_are_unaffected_by_the_new_fields_validation() -> None:
+    view = prepare_issue_view(_issue())
+
+    assert set(view["fields"]) == {"summary", "status", "assignee", "reporter"}
 
 
 def test_safe_filter_removes_structural_personal_data_urls_and_attachment_metadata() -> None:
