@@ -395,6 +395,7 @@ def configure_auth(
     """Incrementally store local paths, entry UUIDs, and non-secret Cloud-ID cache data."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
 
     def action() -> PreviewResult:
         if keyfile is not None and clear_keyfile:
@@ -453,6 +454,7 @@ def unlock_secrets(
     """Prompt for the KeePass master password and start the local broker."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
 
     def action() -> Any:
         if not 0 < ttl_hours <= 8:
@@ -479,7 +481,10 @@ def show_auth_status(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Show whether the local credential broker is unlocked for a profile."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
 
     def action() -> BrokerStatus:
         if _ci_enabled():
@@ -500,7 +505,10 @@ def lock_secrets(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Lock the local credential broker, ending its unlocked session."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(context, lambda: BrokerManager().lock(profile))
 
 
@@ -529,6 +537,7 @@ def create_jira_issue(
     """Create a new Jira issue from a configured preset."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -573,6 +582,7 @@ def read_jira_issue(
     """Fetch a single Jira issue by ID or key."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
 
     def action() -> dict[str, Any]:
         resolved_fields = _optional_value_or_environment(fields, "JUST_DEV_JIRA_READ_FIELDS")
@@ -631,6 +641,7 @@ def search_jira_issues(
     """Search Jira issues by JQL, paginated via --next-page-token."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
 
     def action() -> dict[str, Any]:
         resolved_fields = _optional_value_or_environment(fields, "JUST_DEV_JIRA_SEARCH_FIELDS")
@@ -687,6 +698,7 @@ def update_jira_issue(
     """Update a Jira issue's summary, description, labels, priority, or other fields."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -725,6 +737,7 @@ def assign_jira_issue(
     """Assign a Jira issue to a user by account ID or email."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -757,6 +770,7 @@ def comment_jira_issue(
     """Add a comment to a Jira issue."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -789,6 +803,7 @@ def attach_jira_issue(
     """Attach a local file to a Jira issue."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
 
     def action() -> dict[str, Any] | PreviewResult:
         result = (
@@ -828,6 +843,7 @@ def transition_jira_issue(
     """Move a Jira issue to a named workflow status."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -862,6 +878,7 @@ def delete_jira_issue(
     """Delete a Jira issue, optionally with its subtasks."""
 
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -898,7 +915,10 @@ def create_pull_request(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Create a new Bitbucket pull request from the current branch."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -929,7 +949,10 @@ def show_pull_request(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Show a Bitbucket pull request by ID, or the current branch's open one."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     value = pull_request_id if pull_request_id is not None else os.environ.get("JUST_DEV_PR_ID") or None
     _execute(context, lambda: _runtime(context).service(profile).show_pull_request(value))
 
@@ -946,7 +969,10 @@ def approve_pull_request(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Approve a Bitbucket pull request."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -974,7 +1000,10 @@ def decline_pull_request(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Decline a Bitbucket pull request."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -1003,7 +1032,10 @@ def comment_pull_request(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Add a comment to a Bitbucket pull request."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -1033,7 +1065,10 @@ def add_pull_request_reviewer(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Add a reviewer to a Bitbucket pull request."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -1071,7 +1106,10 @@ def merge_pull_request(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Merge a Bitbucket pull request."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -1105,7 +1143,10 @@ def run_build(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Queue a Jenkins build from a named preset."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -1134,7 +1175,10 @@ def show_build_status(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Show a Jenkins build's status by preset and reference."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     _execute(
         context,
         lambda: (
@@ -1159,7 +1203,10 @@ def preview_release_notes(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Render a markdown file as Confluence storage format without publishing."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
     del profile
     _execute(
         context,
@@ -1189,7 +1236,10 @@ def publish_release_notes(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Publish a markdown file as Confluence release notes."""
+
     _set_command_output_options(context, output_format, safe)
+    profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
 
     def action() -> Any:
         path = _argument_or_environment(
@@ -1218,6 +1268,8 @@ def verify_project(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Run the project's configured verification command."""
+
     _set_command_output_options(context, output_format, safe)
     _execute(context, lambda: _runtime(context).service(require_broker=False).verify_project())
 
@@ -1230,6 +1282,8 @@ def run_ci(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
+    """Validate devtools prerequisites, then run the project's verification command."""
+
     _set_command_output_options(context, output_format, safe)
     _execute(context, lambda: _runtime(context).service(require_broker=False).run_ci())
 

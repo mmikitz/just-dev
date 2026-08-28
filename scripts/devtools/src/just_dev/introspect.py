@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 import typer.main
+from typer.core import TyperArgument
 
 _JSON_TYPES = {
     "str": "string",
@@ -78,7 +79,10 @@ _DEFAULT_ANNOTATIONS = {"readOnly": False, "destructive": True, "idempotent": Fa
 # request body; renaming create's former `--fields` off the name shared with
 # read/search's comma-separated field list is what resolved the collision,
 # not this override — this only declares the object shape Click's own type
-# inference can't).
+# inference can't). Keyed by each param's manifest key (`_param_key`, R1),
+# i.e. the same string that ends up in `inputSchema.properties` — not
+# necessarily `param.name`, though every entry below happens to have both
+# agree today.
 SCHEMA_OVERRIDES: dict[str, dict[str, dict[str, Any]]] = {
     "jira.create-jira-issue": {
         "extra_fields": {
@@ -139,8 +143,27 @@ def _json_type(param: Any) -> str:
     return _JSON_TYPES.get(type_name, "string")
 
 
-def _param_schema(dotted_name: str, param: Any) -> dict[str, Any]:
-    override = SCHEMA_OVERRIDES.get(dotted_name, {}).get(param.name)
+def _param_key(param: Any) -> str:
+    """The manifest property key a consumer will kebab-case back into the flag they actually
+    type (R1): for an option, that is its declared long flag (`--format` -> `format`, so it
+    round-trips; `--dry-run` -> `dry_run` -> `--dry-run` is a no-op the same way), not
+    `param.name` -- Typer sets that to the Python parameter name, and the two diverge whenever
+    a command's parameter name doesn't match its own flag (every command's `output_format` is
+    bound to `--format`, not `--output-format`). A positional argument has no flag at all, so
+    it keeps `param.name`, which is also how `SCHEMA_OVERRIDES` below and the regression test
+    in test_justfiles.py identify it.
+    """
+
+    if isinstance(param, TyperArgument):
+        assert param.name is not None, "a positional argument exposed to the CLI always has a name"
+        return param.name
+    long_opts = [opt for opt in param.opts if opt.startswith("--")]
+    flag = long_opts[0] if long_opts else param.opts[0]
+    return flag.lstrip("-").replace("-", "_")
+
+
+def _param_schema(dotted_name: str, key: str, param: Any) -> dict[str, Any]:
+    override = SCHEMA_OVERRIDES.get(dotted_name, {}).get(key)
     if override is not None:
         schema = dict(override)
     elif getattr(param, "multiple", False):
@@ -153,8 +176,22 @@ def _param_schema(dotted_name: str, param: Any) -> dict[str, Any]:
 
 
 def _input_schema(dotted_name: str, command: Any) -> dict[str, Any]:
-    properties = {param.name: _param_schema(dotted_name, param) for param in command.params}
-    required = sorted(param.name for param in command.params if param.required)
+    # Keyed once per param and reused for `properties`, `required`, and the override lookup,
+    # so the three can never reference three different names for the same parameter (R1).
+    keyed_params = [(_param_key(param), param) for param in command.params]
+    properties: dict[str, Any] = {}
+    positional_index = 0
+    for key, param in keyed_params:
+        prop_schema = _param_schema(dotted_name, key, param)
+        if isinstance(param, TyperArgument):
+            # The CLI has no `--flag` for these at all (R1): a consumer that kebab-cases every
+            # property name into a flag needs to know which ones instead take a bare value at
+            # a fixed position, e.g. `just-dev jira read-jira-issue ABC-123`.
+            prop_schema["x-cli-positional"] = True
+            prop_schema["x-cli-positional-index"] = positional_index
+            positional_index += 1
+        properties[key] = prop_schema
+    required = sorted(key for key, param in keyed_params if param.required)
     schema: dict[str, Any] = {"type": "object", "properties": properties}
     if required:
         schema["required"] = required

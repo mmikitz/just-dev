@@ -343,8 +343,37 @@ now resolved by rename, not merely declared: `create-jira-issue`'s flag is
 Click's own type inference can't express, the way `update-jira-issue`'s
 positional `request` already needed one. `tests/test_introspect.py` pins the
 annotation table, the schema shapes (including that `create-jira-issue` has
-no `fields` property at all), and that every Jira command's description is
-non-empty.
+no `fields` property at all), and that every command's description is
+non-empty (`test_every_command_has_a_non_empty_description` walks
+`describe_commands(app)` rather than hand-listing commands, so a newly added
+one with no docstring fails it instead of silently joining the gap).
+
+Declaring the contract is only half the job if nothing checks it against the
+surface people actually invoke (new in the R1 pass). `_input_schema` used to
+key each property off the Python parameter name, not the CLI flag — every
+command's `output_format` parameter is bound to Typer's `--format`, not
+`--output-format`, so an agent that read the documented kebab-case
+convention (`dry_run` -> `--dry-run`) and applied it to `output_format` got a
+flag no recipe accepts. Positional arguments (`issue_id_or_key`, `request`,
+...) were published as indistinguishable from ordinary flags, so the same
+agent had no way to know `--issue-id-or-key VALUE` doesn't exist either. And
+`--profile` was accepted by every Typer command already, yet missing from
+every `jira.just`/`bitbucket.just`/`jenkins.just`/`confluence.just` recipe —
+the manifest and the Python CLI agreed with each other while the thing an
+agent actually runs, `just <recipe>`, disagreed with both. `_param_key` now
+derives each property's name from the parameter's declared long option
+(Typer's `TyperArgument`/`TyperOption`, stripped and underscored so it
+round-trips through kebab-casing back to the real flag), falling back to the
+Python name only for a true positional, which is additionally marked
+`x-cli-positional`/`x-cli-positional-index` rather than left to guesswork;
+every recipe in those four `.just` files now declares `--profile`. The
+regression gate lives at the layer the first three bugs actually happened —
+`tests/test_justfiles.py::test_manifest_matches_the_real_recipe_surface`
+walks `describe_commands(app)` and, for every declared property of every
+command, drives the real `just` recipe with the derived `--kebab-flag` (or,
+for an `x-cli-positional` property, asserts `just` rejects that flag, since
+it has none) — so a manifest that once again describes a flag the recipe
+layer doesn't have fails a test instead of waiting for an agent to hit it.
 
 ## 23. Consent is an argument, not an ambient setting (new in the MCP-compatibility pass)
 

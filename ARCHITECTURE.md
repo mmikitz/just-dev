@@ -130,7 +130,12 @@ All public result recipes accept `--format text|markdown|json` and `--safe`.
 Text is compact plain output, Markdown is readable structured output, and JSON
 is machine-oriented. The Jira read command defaults to a concise Markdown
 summary. Use `--view full --format json` when an automation needs the complete
-issue representation.
+issue representation. Every recipe that talks to a remote service also
+accepts `--profile NAME` to select a local auth profile other than
+`default` (`auth.just`'s recipes always forwarded it, being a raw `"$@"`
+passthrough; every `jira.just`/`bitbucket.just`/`jenkins.just`/
+`confluence.just` recipe now declares it too, matching the `--profile`
+option every one of those commands already had at the Typer layer).
 
 ```text
 just read-jira-issue ISSUE \

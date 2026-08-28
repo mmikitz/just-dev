@@ -10,6 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from just_dev.cli import app
+from just_dev.introspect import describe_commands
+
 ROOT = Path(__file__).parents[1]
 REPO_ROOT = ROOT.parents[1]
 
@@ -214,6 +217,14 @@ RECIPES: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], tuple[str,
     ("verify-project", "project", "verify-project", (), (), ("project", "verify-project")),
     ("run-ci", "project", "run-ci", (), (), ("project", "run-ci")),
 )
+
+# describe_commands(app) names each command "module.recipe" (bare "recipe" for the two commands
+# registered directly on the top-level app, whose recipes nonetheless live in the "devtools"
+# just module) -- derived from RECIPES so the mapping can't drift from the table above.
+_RECIPE_BY_DOTTED_NAME: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    (recipe if module == "devtools" else f"{module}.{recipe}"): (module, recipe, args)
+    for _alias, module, recipe, args, _env_vars, _argv_suffix in RECIPES
+}
 
 # A stand-in for `uv` that records how it was invoked instead of running the real CLI. This
 # isolates the just-layer plumbing (recipe parameters -> exported JUST_DEV_* env vars -> command)
@@ -543,3 +554,60 @@ def test_invalid_format_recipe_flag_surfaces_the_global_click_error_with_exit_co
     assert completed.returncode != 0
     assert "exit code 2" in completed.stderr
     assert "--format" in completed.stderr
+
+
+# --- R1 regression gate: describe-commands must describe the recipe surface people actually
+# invoke, in both directions -- every non-positional property is a real --kebab-flag `just`
+# accepts and that carries its value through, and every x-cli-positional property is NOT also
+# invocable as a flag, since it has none. ---
+
+
+def _dummy_value(key: str, schema: dict) -> str:
+    if key == "view":
+        # The only recipe-level `[arg(..., pattern=...)]` constraint (jira.just's --view):
+        # any other string would be rejected by `just` itself, before this test's flag even
+        # gets a chance to matter.
+        return "full"
+    if schema.get("type") in ("integer", "number"):
+        return "42"
+    return f"dummy-{key}-value"
+
+
+@requires_just
+@pytest.mark.parametrize("tool", describe_commands(app), ids=lambda tool: str(tool["name"]))
+def test_manifest_matches_the_real_recipe_surface(just_invocation, tool) -> None:
+    """Before R1 this failed three separate ways: every command's `output_format` property
+    published `--output-format`, which no recipe accepts (the real flag is `--format`);
+    `issue_id_or_key` and `request` were published as ordinary properties even though they are
+    positional and so have no `--flag` form at all; and `--profile` was missing from every
+    jira/bitbucket/jenkins/confluence recipe even though every command already accepted it in
+    Python. Walking describe_commands(app) rather than hand-listing commands/properties means a
+    newly added command or parameter is covered automatically instead of silently joining a gap.
+    """
+
+    dotted_name = str(tool["name"])
+    assert dotted_name in _RECIPE_BY_DOTTED_NAME, f"add {dotted_name} to RECIPES above so this test can drive it"
+    module, recipe, required_args = _RECIPE_BY_DOTTED_NAME[dotted_name]
+
+    for key, schema in tool["inputSchema"]["properties"].items():
+        kebab_flag = "--" + key.replace("_", "-")
+
+        if schema.get("x-cli-positional"):
+            completed = _run_just(module, recipe, *required_args, kebab_flag, "dummy")
+            assert completed.returncode != 0, (
+                f"{dotted_name}: `just` accepted {kebab_flag}, but manifest property {key!r} is positional"
+            )
+            assert "does not have option" in completed.stderr, completed.stderr
+            continue
+
+        if schema.get("type") == "boolean":
+            captured = just_invocation(module, recipe, *required_args, kebab_flag)
+            landed = "1" in captured["env"].values() or kebab_flag in captured["argv"]
+        else:
+            value = _dummy_value(key, schema)
+            captured = just_invocation(module, recipe, *required_args, kebab_flag, value)
+            landed = value in captured["argv"] or value in captured["env"].values()
+        assert landed, (
+            f"{dotted_name}: `just` accepted {kebab_flag}, but its value never reached argv or a "
+            f"JUST_DEV_* env var (manifest property {key!r})"
+        )

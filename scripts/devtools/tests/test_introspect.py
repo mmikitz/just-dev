@@ -66,16 +66,12 @@ def test_multi_value_options_become_array_schemas() -> None:
     assert entry_schema["type"] == "array"
 
 
-def test_jira_commands_have_a_non_empty_description() -> None:
-    for name in (
-        "jira.create-jira-issue",
-        "jira.read-jira-issue",
-        "jira.search-jira-issues",
-        "jira.update-jira-issue",
-        "jira.assign-jira-issue",
-        "jira.comment-jira-issue",
-        "jira.attach-jira-issue",
-        "jira.transition-jira-issue",
-        "jira.delete-jira-issue",
-    ):
-        assert _tool(name)["description"], f"{name} should have a non-empty description"
+def test_every_command_has_a_non_empty_description() -> None:
+    """R1: 15 commands -- everything but the nine Jira commands and the two top-level
+    commands -- had no docstring and so no description in the manifest, silently telling
+    an agent nothing about what they do. Enumerated via describe_commands(app) rather than
+    hand-listed (this test used to only check the nine Jira names), so a newly added command
+    with no docstring fails here instead of quietly joining the gap."""
+
+    for tool in describe_commands(app):
+        assert tool["description"], f"{tool['name']} should have a non-empty description"
