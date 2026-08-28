@@ -16,5 +16,6 @@ check-devtools $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
 [arg('JUST_DEV_FORMAT', long='format')]
 [arg('JUST_DEV_SAFE', long='safe', value='1')]
+[doc('List every command as a machine-readable MCP-style tool manifest.')]
 describe-commands $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
     @uv run --locked just-dev describe-commands

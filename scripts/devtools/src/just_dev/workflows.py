@@ -291,13 +291,22 @@ class DevtoolsService:
         announce: Callable[[PreviewResult], None] | None = None,
     ) -> dict[str, Any] | PreviewResult:
         self._validate_atlassian()
-        require_preset(self.config.jira.presets, preset_name, "Jira")
+        preset = require_preset(self.config.jira.presets, preset_name, "Jira")
         if not summary.strip():
             raise InputValidationError("Jira summary must not be empty.")
         extra_fields = self._jira_custom_fields(fields)
         preview = PreviewResult(
             action="create Jira issue",
-            details={"preset": preset_name, "summary": summary, "description": description, "fields": extra_fields},
+            details={
+                "preset": preset_name,
+                "summary": summary,
+                "description": description,
+                "fields": extra_fields,
+                "project": preset.project,
+                "issue_type": preset.issue_type,
+                "labels": preset.labels,
+                "components": preset.components,
+            },
         )
         if dry_run:
             return preview

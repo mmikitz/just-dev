@@ -20,15 +20,18 @@ from .introspect import describe_commands as _describe_commands
 from .jira import (
     parse_includes,
     prepare_attach_view,
+    prepare_comment_view,
+    prepare_create_view,
     prepare_issue_view,
     prepare_search_view,
     render_attach_markdown,
+    render_comment_markdown,
+    render_create_markdown,
     render_issue_markdown,
     render_search_markdown,
     validate_view,
 )
 from .models import BrokerStatus, PreviewResult
-from .operations import execute_operation
 from .redaction import redact_data, redact_text
 from .rendering import filter_safe_output, known_safe_output_formats, render_markdown, render_text
 from .workflows import DevtoolsService
@@ -148,6 +151,11 @@ class _CiOperationClient:
     """CI-only execution with credentials injected by the job's credentials store."""
 
     def invoke(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        # Deferred (U8): operations.py's own adapter import is lazy too, but importing
+        # this module (e.g. for --help, or a command that fails before reaching the
+        # network) must not import operations.py at all, let alone what it now defers.
+        from .operations import execute_operation
+
         tokens = {scope: os.environ.get(f"JUST_DEV_CI_{scope.upper()}_TOKEN", "") for scope in _CI_SCOPES}
         try:
             return execute_operation(tokens, operation, {**payload, "__just_dev_ci": True})
@@ -567,9 +575,9 @@ def create_jira_issue(
 
     _set_command_output_options(context, output_format, safe)
     profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
-    _execute(
-        context,
-        lambda: (
+
+    def action() -> dict[str, Any] | PreviewResult:
+        result = (
             _runtime(context)
             .service(profile)
             .create_jira_issue(
@@ -581,7 +589,14 @@ def create_jira_issue(
                 yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
-        ),
+        )
+        return prepare_create_view(result) if isinstance(result, dict) else result
+
+    _execute(
+        context,
+        action,
+        default_format="markdown",
+        markdown_renderer=render_create_markdown,
     )
 
 
@@ -800,19 +815,29 @@ def comment_jira_issue(
 
     _set_command_output_options(context, output_format, safe)
     profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
-    _execute(
-        context,
-        lambda: (
+
+    def action() -> dict[str, Any] | PreviewResult:
+        # Jira's add-comment response carries no issue key/id of its own (see
+        # jira.py::prepare_comment_view); fold in the one the caller already gave us.
+        key = _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key")
+        result = (
             _runtime(context)
             .service(profile)
             .comment_jira_issue(
-                _argument_or_environment(issue_id_or_key, "JUST_DEV_JIRA_ISSUE_ID_OR_KEY", "Issue ID or key"),
+                key,
                 _argument_or_environment(comment, "JUST_DEV_JIRA_COMMENT", "Comment"),
                 dry_run=_flag_or_environment(dry_run, "JUST_DEV_DRY_RUN"),
                 yes=_explicit_yes(yes),
                 announce=lambda preview: _announce_preview(context, preview),
             )
-        ),
+        )
+        return prepare_comment_view({**result, "issue_id_or_key": key}) if isinstance(result, dict) else result
+
+    _execute(
+        context,
+        action,
+        default_format="markdown",
+        markdown_renderer=render_comment_markdown,
     )
 
 
@@ -1319,7 +1344,10 @@ def run_ci(
 
 def main() -> None:
     try:
-        app()
+        # Every command is documented and invoked as `just <recipe>`, not this raw Python
+        # entrypoint; prog_name makes Click's usage-error hints ("Try '... --help' ...")
+        # name the binary a user actually typed, without changing their exit code (2).
+        app(prog_name="just")
     except DevtoolsError as error:
         # Covers errors raised by callback/argument parsing before a command wrapper is active.
         typer.echo(f"error: {redact_text(error)}", err=True)

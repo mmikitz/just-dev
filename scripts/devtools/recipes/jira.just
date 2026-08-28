@@ -13,8 +13,10 @@ import 'common.just'
 [arg('JUST_DEV_PROFILE', long='profile', help='Local auth profile.')]
 [arg('JUST_DEV_FORMAT', long='format', help='Output format: text, markdown, or json.')]
 [arg('JUST_DEV_SAFE', long='safe', value='1', help='Filter structural identity and URL fields.')]
-create-jira-issue $JUST_DEV_JIRA_PRESET $JUST_DEV_JIRA_SUMMARY $JUST_DEV_JIRA_DESCRIPTION='' $JUST_DEV_JIRA_EXTRA_FIELDS='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev jira create-jira-issue {{ if YES == '1' { '--yes' } else { '' } }}
+[arg('HELP', long='help', value='1', help='Show command help and exit.')]
+[doc('Create a new Jira issue from a configured preset.')]
+create-jira-issue $JUST_DEV_JIRA_PRESET='' $JUST_DEV_JIRA_SUMMARY='' $JUST_DEV_JIRA_DESCRIPTION='' $JUST_DEV_JIRA_EXTRA_FIELDS='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='' HELP='':
+    @uv run --locked just-dev jira create-jira-issue {{ if YES == '1' { '--yes' } else { '' } }} {{ if HELP == '1' { '--help' } else { '' } }}
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
@@ -26,8 +28,9 @@ create-jira-issue $JUST_DEV_JIRA_PRESET $JUST_DEV_JIRA_SUMMARY $JUST_DEV_JIRA_DE
 [arg('JUST_DEV_PROFILE', long='profile', help='Local auth profile.')]
 [arg('JUST_DEV_FORMAT', long='format', help='Output format: text, markdown, or json.')]
 [arg('JUST_DEV_SAFE', long='safe', value='1', help='Filter structural identity and URL fields.')]
-read-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_READ_FIELDS='' $JUST_DEV_JIRA_READ_INCLUDE='' $JUST_DEV_JIRA_READ_VIEW='' $JUST_DEV_JIRA_READ_EXPAND='' $JUST_DEV_JIRA_READ_PROPERTIES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev jira read-jira-issue
+[arg('HELP', long='help', value='1', help='Show command help and exit.')]
+read-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY='' $JUST_DEV_JIRA_READ_FIELDS='' $JUST_DEV_JIRA_READ_INCLUDE='' $JUST_DEV_JIRA_READ_VIEW='' $JUST_DEV_JIRA_READ_EXPAND='' $JUST_DEV_JIRA_READ_PROPERTIES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='' HELP='':
+    @uv run --locked just-dev jira read-jira-issue {{ if HELP == '1' { '--help' } else { '' } }}
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
@@ -39,8 +42,9 @@ read-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_READ_FIELDS='' $JU
 [arg('JUST_DEV_PROFILE', long='profile', help='Local auth profile.')]
 [arg('JUST_DEV_FORMAT', long='format', help='Output format: text, markdown, or json.')]
 [arg('JUST_DEV_SAFE', long='safe', value='1', help='Filter structural identity and URL fields.')]
-search-jira-issues $JUST_DEV_JIRA_SEARCH_JQL $JUST_DEV_JIRA_SEARCH_FIELDS='' $JUST_DEV_JIRA_SEARCH_VIEW='' $JUST_DEV_JIRA_SEARCH_LIMIT='' $JUST_DEV_JIRA_SEARCH_NEXT_PAGE_TOKEN='' $JUST_DEV_JIRA_SEARCH_EXPAND='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev jira search-jira-issues
+[arg('HELP', long='help', value='1', help='Show command help and exit.')]
+search-jira-issues $JUST_DEV_JIRA_SEARCH_JQL='' $JUST_DEV_JIRA_SEARCH_FIELDS='' $JUST_DEV_JIRA_SEARCH_VIEW='' $JUST_DEV_JIRA_SEARCH_LIMIT='' $JUST_DEV_JIRA_SEARCH_NEXT_PAGE_TOKEN='' $JUST_DEV_JIRA_SEARCH_EXPAND='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='' HELP='':
+    @uv run --locked just-dev jira search-jira-issues {{ if HELP == '1' { '--help' } else { '' } }}
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
@@ -53,8 +57,9 @@ search-jira-issues $JUST_DEV_JIRA_SEARCH_JQL $JUST_DEV_JIRA_SEARCH_FIELDS='' $JU
 [arg('JUST_DEV_PROFILE', long='profile', help='Local auth profile.')]
 [arg('JUST_DEV_FORMAT', long='format', help='Output format: text, markdown, or json.')]
 [arg('JUST_DEV_SAFE', long='safe', value='1', help='Filter structural identity and URL fields.')]
-update-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_UPDATE_REQUEST='' $JUST_DEV_JIRA_SUMMARY='' $JUST_DEV_JIRA_DESCRIPTION='' $JUST_DEV_JIRA_LABELS='' $JUST_DEV_JIRA_PRIORITY='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev jira update-jira-issue {{ if YES == '1' { '--yes' } else { '' } }}
+[arg('HELP', long='help', value='1', help='Show command help and exit.')]
+update-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY='' $JUST_DEV_JIRA_UPDATE_REQUEST='' $JUST_DEV_JIRA_SUMMARY='' $JUST_DEV_JIRA_DESCRIPTION='' $JUST_DEV_JIRA_LABELS='' $JUST_DEV_JIRA_PRIORITY='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='' HELP='':
+    @uv run --locked just-dev jira update-jira-issue {{ if YES == '1' { '--yes' } else { '' } }} {{ if HELP == '1' { '--help' } else { '' } }}
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
@@ -64,8 +69,9 @@ update-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_UPDATE_REQUEST='
 [arg('JUST_DEV_PROFILE', long='profile', help='Local auth profile.')]
 [arg('JUST_DEV_FORMAT', long='format', help='Output format: text, markdown, or json.')]
 [arg('JUST_DEV_SAFE', long='safe', value='1', help='Filter structural identity and URL fields.')]
-assign-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_ASSIGNEE='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev jira assign-jira-issue {{ if YES == '1' { '--yes' } else { '' } }}
+[arg('HELP', long='help', value='1', help='Show command help and exit.')]
+assign-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY='' $JUST_DEV_JIRA_ASSIGNEE='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='' HELP='':
+    @uv run --locked just-dev jira assign-jira-issue {{ if YES == '1' { '--yes' } else { '' } }} {{ if HELP == '1' { '--help' } else { '' } }}
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
@@ -74,8 +80,9 @@ assign-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_ASSIGNEE='' $JUS
 [arg('JUST_DEV_PROFILE', long='profile', help='Local auth profile.')]
 [arg('JUST_DEV_FORMAT', long='format', help='Output format: text, markdown, or json.')]
 [arg('JUST_DEV_SAFE', long='safe', value='1', help='Filter structural identity and URL fields.')]
-comment-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_COMMENT $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev jira comment-jira-issue {{ if YES == '1' { '--yes' } else { '' } }}
+[arg('HELP', long='help', value='1', help='Show command help and exit.')]
+comment-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY='' $JUST_DEV_JIRA_COMMENT='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='' HELP='':
+    @uv run --locked just-dev jira comment-jira-issue {{ if YES == '1' { '--yes' } else { '' } }} {{ if HELP == '1' { '--help' } else { '' } }}
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
@@ -84,8 +91,9 @@ comment-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_COMMENT $JUST_D
 [arg('JUST_DEV_PROFILE', long='profile', help='Local auth profile.')]
 [arg('JUST_DEV_FORMAT', long='format', help='Output format: text, markdown, or json.')]
 [arg('JUST_DEV_SAFE', long='safe', value='1', help='Filter structural identity and URL fields.')]
-attach-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_FILE_PATH $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev jira attach-jira-issue {{ if YES == '1' { '--yes' } else { '' } }}
+[arg('HELP', long='help', value='1', help='Show command help and exit.')]
+attach-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY='' $JUST_DEV_JIRA_FILE_PATH='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='' HELP='':
+    @uv run --locked just-dev jira attach-jira-issue {{ if YES == '1' { '--yes' } else { '' } }} {{ if HELP == '1' { '--help' } else { '' } }}
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
@@ -94,8 +102,9 @@ attach-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_FILE_PATH $JUST_
 [arg('JUST_DEV_PROFILE', long='profile', help='Local auth profile.')]
 [arg('JUST_DEV_FORMAT', long='format', help='Output format: text, markdown, or json.')]
 [arg('JUST_DEV_SAFE', long='safe', value='1', help='Filter structural identity and URL fields.')]
-transition-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_STATUS $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev jira transition-jira-issue {{ if YES == '1' { '--yes' } else { '' } }}
+[arg('HELP', long='help', value='1', help='Show command help and exit.')]
+transition-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY='' $JUST_DEV_JIRA_STATUS='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='' HELP='':
+    @uv run --locked just-dev jira transition-jira-issue {{ if YES == '1' { '--yes' } else { '' } }} {{ if HELP == '1' { '--help' } else { '' } }}
 
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
@@ -105,13 +114,15 @@ transition-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_STATUS $JUST
 [arg('JUST_DEV_PROFILE', long='profile', help='Local auth profile.')]
 [arg('JUST_DEV_FORMAT', long='format', help='Output format: text, markdown, or json.')]
 [arg('JUST_DEV_SAFE', long='safe', value='1', help='Filter structural identity and URL fields.')]
-delete-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY $JUST_DEV_JIRA_DELETE_SUBTASKS='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='':
-    @uv run --locked just-dev jira delete-jira-issue {{ if YES == '1' { '--yes' } else { '' } }}
+[arg('HELP', long='help', value='1', help='Show command help and exit.')]
+delete-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY='' $JUST_DEV_JIRA_DELETE_SUBTASKS='' $JUST_DEV_DRY_RUN='' YES='' $JUST_DEV_PROFILE='' $JUST_DEV_FORMAT='' $JUST_DEV_SAFE='' HELP='':
+    @uv run --locked just-dev jira delete-jira-issue {{ if YES == '1' { '--yes' } else { '' } }} {{ if HELP == '1' { '--help' } else { '' } }}
 
 # Opt-in only: hits a real, live Jira site (see QA-STRATEGY.md's "Live integration smoke tests are
 # opt-in" layer). Never run by `qa`/`run-ci`. Creates and deletes two throwaway issues; requires
 # unlocked credentials for the active profile. See recipes/jira_integration_smoke.py for details.
 [working-directory(devtools_root)]
 [env('JUST_DEV_PROJECT_ROOT', project_root)]
+[doc('Run the opt-in, live-Jira integration smoke test (never run by qa/run-ci).')]
 jira-integration-smoke:
     @uv run --locked python recipes/jira_integration_smoke.py

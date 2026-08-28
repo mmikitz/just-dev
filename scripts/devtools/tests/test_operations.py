@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
+import just_dev.adapters as adapters
 import just_dev.operations as operations
 from just_dev.errors import AuthenticationError, InputValidationError
 from just_dev.models import PullRequestResult
@@ -105,7 +109,7 @@ class FakeBitbucketAdapter:
 
 def test_jira_crud_operations_forward_complete_request_objects(config, monkeypatch) -> None:
     FakeJiraAdapter.calls = []
-    monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
+    monkeypatch.setattr(adapters, "JiraAdapter", FakeJiraAdapter)
     payload = {"config": config.model_dump(mode="json")}
     tokens = {"jira": "jira-secret"}
 
@@ -166,7 +170,7 @@ def test_jira_crud_operations_forward_complete_request_objects(config, monkeypat
 
 def test_jira_search_issues_operation_forwards_parameters_to_the_adapter(config, monkeypatch) -> None:
     FakeJiraAdapter.calls = []
-    monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
+    monkeypatch.setattr(adapters, "JiraAdapter", FakeJiraAdapter)
     payload = {
         "config": config.model_dump(mode="json"),
         "parameters": {"jql": "project = DEV", "fields": "summary,status", "maxResults": 25},
@@ -180,7 +184,7 @@ def test_jira_search_issues_operation_forwards_parameters_to_the_adapter(config,
 
 def test_jira_search_issues_operation_forwards_parameters_using_a_ci_token(config, monkeypatch) -> None:
     FakeJiraAdapter.calls = []
-    monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
+    monkeypatch.setattr(adapters, "JiraAdapter", FakeJiraAdapter)
     payload = {
         "config": config.model_dump(mode="json"),
         "parameters": {"jql": "project = DEV"},
@@ -195,7 +199,7 @@ def test_jira_search_issues_operation_forwards_parameters_using_a_ci_token(confi
 
 def test_jira_assign_comment_attach_and_transition_operations_forward_to_the_adapter(config, monkeypatch) -> None:
     FakeJiraAdapter.calls = []
-    monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
+    monkeypatch.setattr(adapters, "JiraAdapter", FakeJiraAdapter)
     payload = {"config": config.model_dump(mode="json")}
     tokens = {"jira": "jira-secret"}
 
@@ -246,7 +250,7 @@ def test_jira_assign_comment_attach_and_transition_operations_forward_to_the_ada
 
 def test_jira_verify_credentials_operation_forwards_the_token_to_the_adapter(config, monkeypatch) -> None:
     FakeJiraAdapter.calls = []
-    monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
+    monkeypatch.setattr(adapters, "JiraAdapter", FakeJiraAdapter)
     payload = {"config": config.model_dump(mode="json")}
 
     result = execute_operation({"jira": "jira-secret"}, "jira.verify_credentials", payload)
@@ -299,7 +303,7 @@ def test_bitbucket_create_pull_request_forwards_description_reviewers_and_close_
     config, monkeypatch
 ) -> None:
     FakeBitbucketAdapter.calls = []
-    monkeypatch.setattr(operations, "BitbucketAdapter", FakeBitbucketAdapter)
+    monkeypatch.setattr(adapters, "BitbucketAdapter", FakeBitbucketAdapter)
     payload = {"config": config.model_dump(mode="json")}
 
     result = execute_operation(
@@ -331,7 +335,7 @@ def test_bitbucket_create_pull_request_forwards_description_reviewers_and_close_
 
 def test_bitbucket_create_pull_request_defaults_description_and_reviewers_when_omitted(config, monkeypatch) -> None:
     FakeBitbucketAdapter.calls = []
-    monkeypatch.setattr(operations, "BitbucketAdapter", FakeBitbucketAdapter)
+    monkeypatch.setattr(adapters, "BitbucketAdapter", FakeBitbucketAdapter)
     payload = {"config": config.model_dump(mode="json")}
 
     execute_operation(
@@ -347,7 +351,7 @@ def test_bitbucket_create_pull_request_defaults_description_and_reviewers_when_o
 
 def test_bitbucket_new_pull_request_operations_forward_to_the_adapter(config, monkeypatch) -> None:
     FakeBitbucketAdapter.calls = []
-    monkeypatch.setattr(operations, "BitbucketAdapter", FakeBitbucketAdapter)
+    monkeypatch.setattr(adapters, "BitbucketAdapter", FakeBitbucketAdapter)
     payload = {"config": config.model_dump(mode="json")}
     tokens = {"bitbucket": "bb-secret"}
 
@@ -388,7 +392,7 @@ def test_bitbucket_new_pull_request_operations_forward_to_the_adapter(config, mo
 
 def test_jira_create_issue_preset_fields_cannot_be_overridden_by_custom_fields(config, monkeypatch) -> None:
     FakeJiraAdapter.calls = []
-    monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
+    monkeypatch.setattr(adapters, "JiraAdapter", FakeJiraAdapter)
     payload = {"config": config.model_dump(mode="json")}
 
     result = execute_operation(
@@ -435,3 +439,25 @@ def test_search_jira_issues_missing_local_and_ci_tokens_explain_the_respective_r
 
     with pytest.raises(AuthenticationError, match="JUST_DEV_CI_JIRA_TOKEN"):
         execute_operation({}, "jira.search_issues", {**payload, "__just_dev_ci": True})
+
+
+def test_importing_operations_does_not_import_the_adapter_sdks() -> None:
+    """U8: BitbucketAdapter/ConfluenceAdapter/JenkinsAdapter/JiraAdapter transitively import
+    the atlassian/jenkins SDKs and requests/bs4 (~285ms); execute_operation only needs them
+    once it actually dispatches to one, so merely importing this module must not pay for
+    them. Runs in a fresh interpreter: an earlier test in this same process may already have
+    imported just_dev.adapters directly, which would make an in-process sys.modules check
+    meaningless."""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import just_dev.operations, sys; assert 'atlassian' not in sys.modules; "
+            "assert 'jenkins' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
