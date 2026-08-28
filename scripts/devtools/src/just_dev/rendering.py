@@ -136,7 +136,7 @@ def _markdown_lines(value: Any, lines: list[str], *, depth: int, label: str | No
 
 
 def _markdown_label(value: str) -> str:
-    return value.replace("_", " ").replace("*", "\\*")
+    return value.replace("*", "\\*")
 
 
 def _scalar(value: Any) -> str:
