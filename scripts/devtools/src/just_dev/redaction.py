@@ -11,6 +11,9 @@ _AUTH_HEADER = re.compile(r"(?i)(authorization\s*[:=]\s*)(?:bearer|basic)\s+[^\s
 _TOKEN_ASSIGNMENT = re.compile(r"(?i)\b(token|password|secret|api[_-]?key)\b\s*([:=])\s*([^\s,;]+)")
 _URL_CREDENTIALS = re.compile(r"(https?://)[^\s/@:]+:[^\s/@]+@")
 _SENSITIVE_KEY = re.compile(r"(?i)(token|password|secret|api[_-]?key|authorization)")
+# Known non-secret keys that happen to match _SENSITIVE_KEY, e.g. Jira's pagination
+# cursor (`nextPageToken` / `next_page_token`). Compared casefolded.
+_NON_SECRET_KEYS = frozenset({"nextpagetoken", "next_page_token"})
 
 
 def redact_text(value: object, known_secrets: Sequence[str] = ()) -> str:
@@ -25,12 +28,16 @@ def redact_text(value: object, known_secrets: Sequence[str] = ()) -> str:
     return _URL_CREDENTIALS.sub(r"\1" + REDACTED + "@", text)
 
 
+def _is_sensitive_key(key: str) -> bool:
+    return key.casefold() not in _NON_SECRET_KEYS and bool(_SENSITIVE_KEY.search(key))
+
+
 def redact_data(value: Any, known_secrets: Sequence[str] = ()) -> Any:
     """Recursively redact mapping fields while retaining useful diagnostics."""
 
     if isinstance(value, Mapping):
         return {
-            str(key): REDACTED if _SENSITIVE_KEY.search(str(key)) else redact_data(item, known_secrets)
+            str(key): REDACTED if _is_sensitive_key(str(key)) else redact_data(item, known_secrets)
             for key, item in value.items()
         }
     if isinstance(value, list | tuple):
