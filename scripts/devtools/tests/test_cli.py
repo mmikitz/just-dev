@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -255,7 +257,7 @@ def test_ci_operation_client_uses_process_injected_credentials_without_broker(mo
         captured.update(tokens=tokens, operation=operation, payload=payload)
         return {"ok": True}
 
-    monkeypatch.setattr("just_dev.cli.execute_operation", fake_execute)
+    monkeypatch.setattr("just_dev.operations.execute_operation", fake_execute)
     monkeypatch.setenv("JUST_DEV_CI_JENKINS_TOKEN", "ci-secret")
 
     assert _CiOperationClient().invoke("jenkins.run_build", {"preset": "test"}) == {"ok": True}
@@ -267,7 +269,7 @@ def test_ci_operation_client_redacts_a_devtools_error_message(monkeypatch) -> No
     def fake_execute(tokens, operation, payload):
         raise ConflictError(f"Remote echoed token={tokens['jenkins']} back")
 
-    monkeypatch.setattr("just_dev.cli.execute_operation", fake_execute)
+    monkeypatch.setattr("just_dev.operations.execute_operation", fake_execute)
     monkeypatch.setenv("JUST_DEV_CI_JENKINS_TOKEN", "ci-secret")
 
     with pytest.raises(ConflictError) as raised:
@@ -281,7 +283,7 @@ def test_ci_operation_client_redacts_an_unexpected_exception_instead_of_leaking_
         # Simulates a bug or an SDK exception type the adapter layer does not translate.
         raise KeyError(f"unexpected field near token={tokens['jenkins']}")
 
-    monkeypatch.setattr("just_dev.cli.execute_operation", fake_execute)
+    monkeypatch.setattr("just_dev.operations.execute_operation", fake_execute)
     monkeypatch.setenv("JUST_DEV_CI_JENKINS_TOKEN", "ci-secret")
 
     with pytest.raises(DevtoolsError) as raised:
@@ -626,3 +628,39 @@ def test_configure_auth_updates_an_existing_profile_incrementally(tmp_path, monk
     assert updated.database == str(database)
     assert updated.keyfile is None
     assert updated.entries == {"jira": jira_uuid, "confluence": confluence_uuid}
+
+
+def test_main_calls_the_typer_app_with_the_just_prog_name(monkeypatch) -> None:
+    """U2: every command is documented and invoked as `just <recipe>`, not this raw Python
+    entrypoint, so Click's usage-error hint ("Try '... --help' ...") must name the binary a
+    user actually typed. prog_name only changes that hint, not the exit code (still 2, see
+    test_jira_cli_validation.py and test_justfiles.py)."""
+    from just_dev.cli import main
+
+    calls = []
+    monkeypatch.setattr("just_dev.cli.app", lambda **kwargs: calls.append(kwargs))
+
+    main()
+
+    assert calls == [{"prog_name": "just"}]
+
+
+def test_importing_cli_does_not_import_the_adapter_sdks() -> None:
+    """U8: cli.py's (and operations.py's) execute_operation/adapter imports are deferred so
+    that importing this module -- e.g. for --help, or a command that fails local validation
+    before ever reaching the network -- does not pay for the atlassian/jenkins SDKs (and the
+    requests/bs4 they pull in) those adapters need. Runs in a fresh interpreter: an earlier
+    test in this same process may already have imported just_dev.adapters directly, which
+    would make an in-process sys.modules check meaningless."""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import just_dev.cli, sys; assert 'atlassian' not in sys.modules; assert 'jenkins' not in sys.modules",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
