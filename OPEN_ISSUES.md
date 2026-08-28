@@ -43,15 +43,45 @@ Jira Cloud and found three defects, all now fixed on this branch:
   (`render_attach_markdown`), the way `render_search_markdown` replaced
   the raw dump for search results.
 
-## U3 — No per-recipe `--help`
+## U3 — Per-recipe `--help`
 
-**Status: won't fix (resolved 2026-08-27).** `just --list <namespace>` (e.g.
-`just --list jira`) is the supported discovery path for a recipe's flags;
-`just <recipe> --help` is not going to be made to work. Rationale below,
-kept alongside the original analysis for context.
+**Status: fixed (resolved 2026-08-28).** Reverses the won't-fix below.
+`just <recipe> --help` (e.g. `just read-jira-issue --help`) now works for
+every recipe in `jira.just`, `bitbucket.just`, `jenkins.just`, and
+`confluence.just` that has a required leading positional argument: it
+reaches the Python CLI's own Typer-generated `--help` text instead of dying
+in `just`'s recipe-level parser. `auth.just` needed no change — its
+`*args` / `set positional-arguments` passthrough recipes already forwarded
+`--help` straight through to the Python CLI before this fix.
+
+**Why the two objections below turned out not to hold:**
+
+- **Objection 1 (a required positional blocks `--help`) was correct, and is
+  the fix.** Giving the leading positional a default of `''` (e.g.
+  `read-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY=''` instead of a bare,
+  required `$JUST_DEV_JIRA_ISSUE_ID_OR_KEY`) is what lets `just`'s parser
+  hand `--help` off as an ordinary flag instead of rejecting it in the
+  missing positional's place. Accepted, intentional consequence: `just
+  read-jira-issue` (etc.) with no arguments now fails inside the Python
+  CLI's own validation (`error: Issue ID or key is required.`, exit 25)
+  instead of inside `just`'s parser (exit 2) — the same way every other
+  missing required value already failed, and a fair trade for a working
+  `--help`.
+- **Objection 2 (would need a per-recipe branching shebang script) was
+  wrong.** No shebang script was needed anywhere. The `--yes` mechanism
+  already in every mutation recipe — `[arg('YES', long='yes', value='1',
+  ...)]` plus `{{ if YES == '1' { '--yes' } else { '' } }}` conditional
+  interpolation in the recipe body — is the exact mechanism reused for
+  `--help`: `[arg('HELP', long='help', value='1', ...)]` plus a second
+  `{{ if HELP == '1' { '--help' } else { '' } }}` conditional alongside it.
+  Every recipe body is still a single `@uv run --locked just-dev ...` line.
+
+`just --list <namespace>` and `just describe-commands` remain accurate and
+useful exactly as the correction below describes — `--help` now covers
+per-recipe flag discovery too, it doesn't replace either of them.
 
 **Correction (2026-08-27, MCP tool-contract compatibility analysis):** the
-resolution above overstates what `just --list <namespace>` actually
+original resolution overstated what `just --list <namespace>` actually
 discloses. It prints only the literal placeholder `[OPTIONS]` for a
 recipe's flags — no flag name is shown to a human or a machine:
 
@@ -60,85 +90,25 @@ $ just --list jira
     read-jira-issue [OPTIONS] $JUST_DEV_JIRA_ISSUE_ID_OR_KEY
 ```
 
-`--list` still covers what it was originally credited for (recipe names and
-required positional arguments), so the won't-fix stands for `just <recipe>
---help` specifically. But it is not itself a flag-discovery path, and
-nothing else machine-readable filled that gap until `just describe-commands`
-was added: a manifest of every command's flags, types, and behavior hints
-built from the Python CLI's own Typer/Click introspection (see
-`src/just_dev/introspect.py` and UX-DESIGN-PRINCIPLES.md principle 22). Use
-`just describe-commands --format json` for machine discovery; `just --list
-<namespace>` remains the right tool for a human skimming recipe names.
+`--list` still covers recipe names and required positional arguments, but
+it is not itself a flag-discovery path. `just describe-commands --format
+json` remains the machine-readable manifest (see
+`src/just_dev/introspect.py` and UX-DESIGN-PRINCIPLES.md principle 22);
+`--help` (this section) now covers the human-readable one, and `--list`
+remains the right tool for skimming recipe names.
 
-**Why won't-fix:** every recipe body in `scripts/devtools/recipes/*.just` is
-today a trivial one-liner that delegates entirely to the Python CLI — none
-of the ~25 recipes across `jira.just`, `bitbucket.just`, `jenkins.just`, and
-`confluence.just` contain any shell logic. The mechanical fix below would
-introduce the first branching shebang script into that layer, repeated
-across every recipe, and would also require making each recipe's leading
-positional argument optional so `just <recipe> --help` doesn't also demand
-its normal required input — pushing a validation responsibility from
-`just`'s own parser onto the Python CLI, with its own test coverage per
-recipe. That's a real style break for a benefit `just --list <namespace>`
-already provides today with zero code changes. `UX-DESIGN-PRINCIPLES.md`'s
-principles don't require per-recipe `--help` specifically — principle 1
-("self-describing `--help`") is satisfied by the Typer CLI's own `--help`,
-which already works once a command is actually invoked; the gap is purely
-`just`'s recipe-level flag parsing, and `--list` covers that discovery need
-without touching recipe signatures at all.
-
-**Original problem description (for context):**
-
-`just read-jira-issue --help` fails with
-`error: recipe 'read-jira-issue' does not have option '--help'` — `just`'s
-own argument parser rejects the flag before the Python CLI (which *does*
-support `--help` via Typer) ever runs. This affects all 7 recipes in
-`scripts/devtools/recipes/jira.just`, and likely the other integrations'
-recipes too (`bitbucket.just`, `jenkins.just`, `confluence.just`) for the
-same structural reason.
-
-**Why it's invasive:** every recipe today invokes the CLI with zero
-arguments — all values flow in through `[arg(...)]`-declared environment
-variables (see `scripts/devtools/recipes/jira.just`), and the Python side
-reads them back out via `_argument_or_environment`/`_optional_value_or_environment`
-in `cli.py`. Making `--help` work means:
-
-1. Adding a `[arg('JUST_DEV_HELP', long='help', value='1')]` flag to every
-   recipe signature.
-2. Making every recipe's leading positional argument (e.g.
-   `$JUST_DEV_JIRA_ISSUE_ID_OR_KEY`, currently mandatory with no default)
-   optional, since `just read-jira-issue --help` must not also demand an
-   issue key.
-3. Changing each recipe body from the current one-liner
-   (`@uv run --locked just-dev jira read-jira-issue`) to a shebang script
-   that branches on the help flag, e.g.:
-
-   ```just
-   read-jira-issue $JUST_DEV_JIRA_ISSUE_ID_OR_KEY='' ... $JUST_DEV_HELP='':
-       #!/usr/bin/env bash
-       if [ -n "$JUST_DEV_HELP" ]; then
-           exec uv run --locked just-dev jira read-jira-issue --help
-       else
-           exec uv run --locked just-dev jira read-jira-issue
-       fi
-   ```
-
-   (Typer's own `--help` output works fine once actually invoked — the gap
-   is purely `just`'s recipe-level argument parsing getting in the way
-   first.)
-4. Repeating this for all 7 Jira recipes, then the equivalent recipes in
-   the other integration modules if the fix should be consistent
-   CLI-wide (recommended, since the same `--help` convention should hold
-   for every `just <recipe>` the same way).
-5. New/updated tests in `test_justfiles.py` (the existing alias/namespace
-   parity + shell-safety test file) asserting `just <recipe> --help`
-   exits 0 and prints the recipe's Typer help text, for at least one
-   recipe per integration.
-
-**Alternative considered and adopted:** documenting `just --list jira` (and
-the other namespaces) as the supported discovery path instead — it already
-works per the QA report, requires no code change, and doesn't touch any
-recipe signature. See the resolution at the top of this section.
+**Original problem and won't-fix rationale (superseded 2026-08-28, kept for
+context):** `just read-jira-issue --help` used to fail with `error: recipe
+'read-jira-issue' does not have option '--help'` — `just`'s own argument
+parser rejected the flag before the Python CLI (which already supported
+`--help` via Typer) ever ran, across every recipe with a required leading
+positional in `jira.just`, `bitbucket.just`, `jenkins.just`, and
+`confluence.just`. The original won't-fix judged the mechanical fix —
+making each leading positional optional, plus a per-recipe `--help` flag —
+too invasive for the benefit, on the theory that it would require turning
+every recipe body into a branching shebang script. It didn't: reusing the
+existing `--yes` conditional-interpolation pattern (objection 2, above)
+kept every recipe body a one-liner, which is what made the fix worth doing.
 
 ## Breaking changes from the MCP tool-contract review (F6, F8)
 
