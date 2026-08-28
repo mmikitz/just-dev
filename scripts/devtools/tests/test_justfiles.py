@@ -495,9 +495,10 @@ def test_merge_pull_request_recipe_forwards_message_and_merge_strategy_flags(jus
     assert captured["env"]["JUST_DEV_PR_MERGE_STRATEGY"] == "squash"
 
 
-# --- Error paths: `just` itself rejects these before ever invoking `uv`/the Python CLI, so they need no
-# fake-uv stub, no config, and no credentials -- they are pure argument-count / option-name checks against
-# the recipe signatures declared in recipes/jira.just. ---
+# --- Error paths: `just` itself rejects the two below before ever invoking `uv`/the Python CLI, so they
+# need no fake-uv stub, no config, and no credentials -- they are pure option-name / eager-callback checks
+# against the recipe signatures declared in recipes/jira.just. The missing-positional-arguments test right
+# below `_run_just` is the one exception: it *does* reach the real Python CLI now (see its docstring). ---
 
 
 def _run_just(*args: str) -> subprocess.CompletedProcess:
@@ -517,22 +518,28 @@ def _run_just(*args: str) -> subprocess.CompletedProcess:
 
 @requires_just
 @pytest.mark.parametrize(
-    ("args", "takes"),
+    ("args", "message"),
     [
-        (("transition-jira-issue",), 2),
-        (("transition-jira-issue", "DEV-1"), 2),
-        (("create-jira-issue",), 2),
-        (("comment-jira-issue", "DEV-1"), 2),
-        (("attach-jira-issue", "DEV-1"), 2),
+        (("transition-jira-issue",), "Issue ID or key is required."),
+        (("transition-jira-issue", "DEV-1"), "Target status is required."),
+        (("create-jira-issue",), "Jira preset is required."),
+        (("comment-jira-issue", "DEV-1"), "Comment is required."),
+        (("attach-jira-issue", "DEV-1"), "File path is required."),
     ],
     ids=["transition-zero-args", "transition-one-arg", "create-zero-args", "comment-one-arg", "attach-one-arg"],
 )
-def test_missing_positional_arguments_produce_justs_own_usage_error(args, takes) -> None:
+def test_missing_positional_arguments_fail_python_side_validation(args, message) -> None:
+    """U1: every recipe's leading positional now defaults to '' -- the accepted, intentional
+    consequence of making `just <recipe> --help` reach Typer's own --help instead of dying in
+    just's own parser (see the --help regression tests below). A call that omits a required
+    positional no longer fails just's own argument-count usage error (exit 2); it reaches the
+    Python CLI as an empty string, which `_argument_or_environment` (cli.py) rejects the same way
+    it rejects any other missing required value: InputValidationError, exit 25."""
+
     completed = _run_just(*args)
 
-    assert completed.returncode != 0
-    assert f"but takes {takes}" in completed.stderr
-    assert "usage:" in completed.stderr
+    assert completed.returncode == 25
+    assert f"error: {message}" in completed.stderr
 
 
 @requires_just
@@ -611,3 +618,73 @@ def test_manifest_matches_the_real_recipe_surface(just_invocation, tool) -> None
             f"{dotted_name}: `just` accepted {kebab_flag}, but its value never reached argv or a "
             f"JUST_DEV_* env var (manifest property {key!r})"
         )
+
+
+# --- U1 regression gate: `just <recipe> --help` used to die in just's own parser -- "recipe
+# 'x' does not have option '--help'" if HELP wasn't a declared `just` arg at all, or "got 0
+# positional arguments but takes N" / usage: if a required positional came before it -- before
+# the Python CLI (which already supports --help via Typer) ever ran. Every recipe with a
+# required leading positional now defaults that positional to '' and declares a HELP arg
+# threaded into argv the same way --yes is, so --help reaches argv with nothing else required. ---
+
+
+@requires_just
+@pytest.mark.parametrize(
+    "alias",
+    ["read-jira-issue", "create-pull-request", "run-build", "publish-release-notes", "unlock-secrets"],
+    ids=["jira", "bitbucket", "jenkins", "confluence", "auth"],
+)
+def test_help_flag_reaches_argv_with_no_other_arguments(just_invocation, alias) -> None:
+    """`just_invocation` itself asserts the underlying `just` call exits 0 (see its `run` helper),
+    so a passing call here already proves just's parser accepted a bare `<recipe> --help` -- the
+    remaining assertion confirms --help is exactly what reached the argv the real Python CLI (and
+    therefore Typer's own --help output) would have received."""
+
+    captured = just_invocation(alias, "--help")
+
+    assert captured["argv"][-1] == "--help"
+
+
+@requires_just
+@pytest.mark.parametrize(
+    "alias",
+    ["read-jira-issue", "create-pull-request", "run-build", "publish-release-notes"],
+    ids=["jira", "bitbucket", "jenkins", "confluence"],
+)
+def test_help_flag_prints_typer_help_and_exits_zero(alias) -> None:
+    """The end-to-end counterpart to the argv-threading test above: runs the real Python CLI (no
+    fake-uv stub) to confirm --help actually short-circuits to Typer's own help text at exit 0,
+    not just that the flag survives `just`'s parser. Deliberately doesn't pin the exact program
+    name Typer prints in the "Usage:" line or a specific options-panel heading -- those are
+    cli.py's to choose and change; what U1 promises is that --help produces Typer's real,
+    self-describing help output instead of dying in just's own parser."""
+
+    completed = _run_just(alias, "--help")
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Usage:" in completed.stdout
+    assert "--help" in completed.stdout
+
+
+# --- U5 regression gate: `just` takes the last comment line immediately above a recipe as its
+# `just --list` description. A handful of recipes sat directly under an internal/maintainer-facing
+# explanatory comment block (about $-prefixed parameters, --yes/F6/principle 23, the opt-in smoke
+# test, or -- for describe-commands -- this very file), so `just --list` printed a fragment lifted
+# from the middle of that block instead of a real description. Fixed with an explicit `[doc(...)]`
+# attribute per recipe, confirmed by hand to win over the comment-derived description even with the
+# explanatory block left in place directly above it. ---
+
+_LIST_DESCRIPTION = re.compile(r"#\s+(.+)$", re.MULTILINE)
+
+
+@requires_just
+@pytest.mark.parametrize("module", ["jira", "bitbucket", "jenkins", "confluence", "auth", "devtools"])
+def test_list_descriptions_read_as_real_sentences_not_comment_fragments(module) -> None:
+    completed = _run_just("--list", module)
+    assert completed.returncode == 0, completed.stderr
+
+    descriptions = _LIST_DESCRIPTION.findall(completed.stdout)
+    assert descriptions, f"expected at least one recipe description in `just --list {module}`"
+    for description in descriptions:
+        assert "OPEN_ISSUES.md" not in description, f"{description!r} leaks an internal doc reference"
+        assert not description[:1].islower(), f"{description!r} reads like a sentence fragment, not a description"
