@@ -233,6 +233,25 @@ When a capability has more than one way of establishing state, the command
 whose whole job is reporting that state must check all of them, not just
 the one built first.
 
+Checking every path is still not the same as checking that each path's
+credential actually *works*: presence and validity are different questions,
+and `active: true` used to answer only the first one. A revoked, expired, or
+wrong-scoped Jira token read as perfectly healthy right up until the
+operation that needed it failed. `show_auth_status` now also probes:
+`DevtoolsService.verify_jira_credentials` (`workflows.py`) makes one
+authenticated call to Jira's own current-user endpoint and reports the
+outcome as `BrokerStatus.verified` — `true`/`false` when the probe actually
+ran, `None` when there was nothing to test (`active: false`) or the probe
+itself couldn't be attempted (no Jira credential configured for that path, an
+unresolved Cloud ID, a network failure), so "couldn't check" is never
+misread as either verdict. `test_cli.py`'s `show-auth-status` tests cover all
+four `verified` outcomes. The same probe also arbitrates a single Jira
+operation's own 404 in `DevtoolsService._invoke_jira_issue_operation`, which
+Jira deliberately returns both for a missing issue and for one an
+unauthorized token cannot see: a diagnostic must answer whether the
+credential still works, not just whether one is configured or which path
+built it.
+
 ## 17. Validate what's cheap and local before spending a network round-trip (new in the QA-report pass)
 
 A syntactically-impossible input should fail immediately and specifically,

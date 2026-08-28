@@ -8,8 +8,8 @@ from typer.testing import CliRunner
 
 from just_dev.broker import KeePassProfile, ProfileStore
 from just_dev.cli import Runtime, _CiOperationClient, _LazyBroker, app
-from just_dev.errors import ConfirmationError, ConflictError, DevtoolsError
-from just_dev.models import PreviewResult
+from just_dev.errors import ConfigurationError, ConfirmationError, ConflictError, DevtoolsError
+from just_dev.models import BrokerStatus, PreviewResult
 
 
 def test_preview_release_notes_needs_no_broker(config, tmp_path, monkeypatch) -> None:
@@ -85,6 +85,167 @@ def test_show_auth_status_reports_inactive_in_ci_with_no_tokens_configured(monke
     assert result.exit_code == 0, result.output
     assert '"active": false' in result.output
     assert '"source": "ci"' in result.output
+    # R4: nothing to probe when there is no active credential at all.
+    assert '"verified": null' in result.output
+
+
+class _FakeBrokerManager:
+    """Stands in for BrokerManager() so show-auth-status's local-path `active` is
+    controllable without a real KeePass database or broker subprocess."""
+
+    def __init__(self, *, active: bool) -> None:
+        self._active = active
+
+    def status(self, profile: str) -> BrokerStatus:
+        assert profile == "default"
+        return BrokerStatus(active=self._active)
+
+
+def _stub_local_profile_with_a_jira_entry(monkeypatch, tmp_path) -> None:
+    store = ProfileStore(tmp_path / "profiles")
+    store.save(
+        "default",
+        KeePassProfile(
+            database=str(tmp_path / "secrets.kdbx"),
+            entries={"jira": "00000000-0000-4000-8000-000000000099"},
+        ),
+    )
+    monkeypatch.setattr("just_dev.cli.ProfileStore", lambda: store)
+
+
+def test_show_auth_status_never_probes_when_the_broker_is_inactive(monkeypatch, tmp_path) -> None:
+    """active=False -> verified stays None; there is no credential to test."""
+
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr("just_dev.cli.BrokerManager", lambda: _FakeBrokerManager(active=False))
+
+    class FakeService:
+        def verify_jira_credentials(self):
+            raise AssertionError("the probe must not run when the broker is inactive")
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+
+    result = CliRunner().invoke(app, ["--format", "json", "auth", "show-auth-status"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["active"] is False
+    assert payload["verified"] is None
+
+
+def test_show_auth_status_reports_verified_true_when_the_probe_succeeds(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr("just_dev.cli.BrokerManager", lambda: _FakeBrokerManager(active=True))
+    _stub_local_profile_with_a_jira_entry(monkeypatch, tmp_path)
+
+    class FakeService:
+        def verify_jira_credentials(self):
+            return True
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+
+    result = CliRunner().invoke(app, ["--format", "json", "auth", "show-auth-status"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["active"] is True
+    assert payload["verified"] is True
+
+
+def test_show_auth_status_reports_verified_false_when_the_probe_confirms_a_bad_credential(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr("just_dev.cli.BrokerManager", lambda: _FakeBrokerManager(active=True))
+    _stub_local_profile_with_a_jira_entry(monkeypatch, tmp_path)
+
+    class FakeService:
+        def verify_jira_credentials(self):
+            return False
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+
+    result = CliRunner().invoke(app, ["--format", "json", "auth", "show-auth-status"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["active"] is True
+    assert payload["verified"] is False
+
+
+def test_show_auth_status_reports_verified_none_when_no_jira_credential_is_configured(monkeypatch, tmp_path) -> None:
+    """active=True only proves *some* scope was unlocked (R4): with no Jira entry in
+    this profile at all, there is still nothing to probe, so verified stays None."""
+
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr("just_dev.cli.BrokerManager", lambda: _FakeBrokerManager(active=True))
+    store = ProfileStore(tmp_path / "profiles")
+    store.save(
+        "default",
+        KeePassProfile(
+            database=str(tmp_path / "secrets.kdbx"), entries={"jenkins": "00000000-0000-4000-8000-000000000099"}
+        ),
+    )
+    monkeypatch.setattr("just_dev.cli.ProfileStore", lambda: store)
+
+    class FakeService:
+        def verify_jira_credentials(self):
+            raise AssertionError("the probe must not run without a configured Jira credential")
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+
+    result = CliRunner().invoke(app, ["--format", "json", "auth", "show-auth-status"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["active"] is True
+    assert payload["verified"] is None
+
+
+def test_show_auth_status_reports_verified_none_when_the_probe_itself_cannot_run(monkeypatch, tmp_path) -> None:
+    """active=True with a Jira credential configured, but the probe can't complete
+    (e.g. an unresolvable Cloud ID): "couldn't check" must not read as "confirmed
+    bad" (False) or "confirmed good" (True)."""
+
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr("just_dev.cli.BrokerManager", lambda: _FakeBrokerManager(active=True))
+    _stub_local_profile_with_a_jira_entry(monkeypatch, tmp_path)
+
+    class FakeService:
+        def verify_jira_credentials(self):
+            raise ConfigurationError("No Cloud ID is available for the configured Atlassian site.")
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+
+    result = CliRunner().invoke(app, ["--format", "json", "auth", "show-auth-status"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["active"] is True
+    assert payload["verified"] is None
+
+
+def test_show_auth_status_reports_verified_none_in_ci_when_no_jira_token_is_configured(monkeypatch) -> None:
+    """The CI-side twin of the "no Jira credential configured" case: some other
+    scope's token being present is enough for active=True, but not enough to probe
+    Jira specifically."""
+
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.delenv("JUST_DEV_CI_JIRA_TOKEN", raising=False)
+    monkeypatch.setenv("JUST_DEV_CI_BITBUCKET_TOKEN", "ci-secret")
+
+    class FakeService:
+        def verify_jira_credentials(self):
+            raise AssertionError("the probe must not run without a configured CI Jira token")
+
+    monkeypatch.setattr(Runtime, "service", lambda self, profile="default", require_broker=True: FakeService())
+
+    result = CliRunner().invoke(app, ["--format", "json", "auth", "show-auth-status"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["active"] is True
+    assert payload["verified"] is None
 
 
 def test_ci_operation_client_uses_process_injected_credentials_without_broker(monkeypatch) -> None:

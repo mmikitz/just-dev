@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import signal
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from types import ModuleType
 
 import pytest
@@ -14,11 +16,13 @@ from just_dev.broker import (
     MAX_TTL_SECONDS,
     BrokerClient,
     BrokerManager,
+    BrokerState,
     KeePassProfile,
+    _error_payload,
     read_keepass_tokens,
     validate_profile,
 )
-from just_dev.errors import AuthenticationError, BrokerError, ConfigurationError
+from just_dev.errors import AuthenticationError, BrokerError, ConfigurationError, InputValidationError
 
 
 def test_broker_unlock_status_bad_hmac_and_lock_leave_no_token_on_disk(tmp_path) -> None:
@@ -172,3 +176,86 @@ def test_lock_retains_metadata_when_a_live_broker_cannot_be_authenticated(tmp_pa
         manager._save_state("default", state)
     finally:
         manager.lock()
+
+
+def test_error_payload_carries_a_devtools_errors_status_code_when_set() -> None:
+    """R2b's 404 signal must survive the broker child's JSON-over-IPC serialization,
+    or it would never reach a local-broker caller (only a CI one, which shares the
+    process and never serializes at all)."""
+
+    with_status = InputValidationError("Remote service rejected the request (404).")
+    with_status.status_code = 404
+
+    payload = _error_payload(with_status, {})
+
+    assert payload == {
+        "ok": False,
+        "exit_code": 25,
+        "message": "Remote service rejected the request (404).",
+        "status_code": 404,
+    }
+
+
+def test_error_payload_omits_status_code_when_unset() -> None:
+    payload = _error_payload(InputValidationError("Some other 4xx."), {})
+
+    assert "status_code" not in payload
+
+
+class _FakeIpcConnection:
+    def __init__(self, response: bytes) -> None:
+        self._response = response
+
+    def send_bytes(self, data: bytes) -> None:
+        del data
+
+    def recv_bytes(self) -> bytes:
+        return self._response
+
+    def close(self) -> None:
+        pass
+
+
+def test_broker_client_request_reconstructs_the_status_code_from_the_ipc_response(monkeypatch) -> None:
+    response = json.dumps(
+        {
+            "ok": False,
+            "exit_code": 25,
+            "message": "Remote service rejected the request (404).",
+            "status_code": 404,
+        }
+    ).encode("utf-8")
+    monkeypatch.setattr("just_dev.broker.Client", lambda *args, **kwargs: _FakeIpcConnection(response))
+    state = BrokerState(
+        endpoint="unused",
+        family="AF_UNIX",
+        auth_key=base64.urlsafe_b64encode(b"x" * 32).decode("ascii"),
+        expires_at=datetime.now(UTC),
+        platform="linux",
+        pid=os.getpid(),
+    )
+
+    with pytest.raises(InputValidationError) as raised:
+        BrokerClient(state).request("operation", operation="jira.read_issue", payload={})
+
+    assert raised.value.status_code == 404
+
+
+def test_broker_client_request_leaves_status_code_unset_when_the_response_omits_it(monkeypatch) -> None:
+    response = json.dumps({"ok": False, "exit_code": 21, "message": "Remote service rejected credentials."}).encode(
+        "utf-8"
+    )
+    monkeypatch.setattr("just_dev.broker.Client", lambda *args, **kwargs: _FakeIpcConnection(response))
+    state = BrokerState(
+        endpoint="unused",
+        family="AF_UNIX",
+        auth_key=base64.urlsafe_b64encode(b"x" * 32).decode("ascii"),
+        expires_at=datetime.now(UTC),
+        platform="linux",
+        pid=os.getpid(),
+    )
+
+    with pytest.raises(AuthenticationError) as raised:
+        BrokerClient(state).request("operation", operation="jira.read_issue", payload={})
+
+    assert raised.value.status_code is None

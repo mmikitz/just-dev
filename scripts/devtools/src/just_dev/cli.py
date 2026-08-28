@@ -60,6 +60,29 @@ def _ci_configured_scopes() -> list[str]:
     return sorted(scope for scope in _CI_SCOPES if os.environ.get(f"JUST_DEV_CI_{scope.upper()}_TOKEN", ""))
 
 
+def _probe_jira_credentials(context: typer.Context, profile: str) -> bool | None:
+    """Confirm the active credential actually authenticates against Jira (principle
+    16): an active broker or CI token only proves a credential is *present*, not that
+    it still *works*. Returns True/False for a completed probe, or None when there is
+    no Jira credential configured for this path to probe, or the probe itself could
+    not be attempted (unresolvable Cloud ID, offline, ...).
+    """
+
+    if _ci_enabled():
+        jira_configured = "jira" in _ci_configured_scopes()
+    else:
+        try:
+            jira_configured = bool(ProfileStore().load(profile).entries.get("jira", "").strip())
+        except DevtoolsError:
+            jira_configured = False
+    if not jira_configured:
+        return None
+    try:
+        return _runtime(context).service(profile).verify_jira_credentials()
+    except DevtoolsError:
+        return None
+
+
 @dataclass
 class Runtime:
     config_path: Path | None
@@ -481,7 +504,8 @@ def show_auth_status(
     ] = None,
     safe: Annotated[bool, typer.Option("--safe", help="Filter structural identity and URL fields.")] = False,
 ) -> None:
-    """Show whether the local credential broker is unlocked for a profile."""
+    """Show whether the local credential broker is unlocked for a profile, and,
+    when it is, whether the configured Jira credential actually authenticates."""
 
     _set_command_output_options(context, output_format, safe)
     profile = _option_or_environment(profile, "JUST_DEV_PROFILE", "default")
@@ -490,8 +514,13 @@ def show_auth_status(
         if _ci_enabled():
             # CI never uses the local KeePass broker; report on the env-var tokens it
             # actually authenticates with instead of a broker session that doesn't exist.
-            return BrokerStatus(active=bool(_ci_configured_scopes()), source="ci")
-        return BrokerManager().status(profile)
+            status = BrokerStatus(active=bool(_ci_configured_scopes()), source="ci")
+        else:
+            status = BrokerManager().status(profile)
+        if not status.active:
+            # Nothing to probe: active=False already means no credential is live.
+            return status
+        return status.model_copy(update={"verified": _probe_jira_credentials(context, profile)})
 
     _execute(context, action)
 

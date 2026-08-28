@@ -379,6 +379,94 @@ def test_jira_adapter_assign_issue_rejects_an_ambiguous_email() -> None:
         adapter.assign_issue("secret", "DEV-1", "team@example.com")
 
 
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_jira_adapter_assign_issue_user_search_401_or_403_blames_the_lookup_not_the_session(status_code) -> None:
+    class FakeJiraUserSearchFails:
+        def __init__(self) -> None:
+            self.put_calls: list[tuple] = []
+
+        def resource_url(self, resource, api_root=None, api_version=None):
+            return f"rest/api/3/{resource}"
+
+        def user_find_by_user_string(self, *, query):
+            raise RequestException(f"token=secret status={status_code}", response=_FakeHttpResponse(status_code))
+
+        def put(self, path, *, data=None, params=None):
+            self.put_calls.append((path, data, params))
+            return None
+
+    client = FakeJiraUserSearchFails()
+    adapter = JiraAdapter("cloud", lambda token: client)
+
+    with pytest.raises(PermissionDeniedError, match="Could not look up 'ada@example.com'") as raised:
+        adapter.assign_issue("secret", "DEV-1", "ada@example.com")
+
+    assert "user-search permission" in str(raised.value)
+    assert "secret" not in str(raised.value)
+    assert client.put_calls == []  # The write must never be attempted once the lookup itself failed.
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_error", "expected_message"),
+    [
+        (401, AuthenticationError, "Remote service rejected the configured credentials."),
+        (403, PermissionDeniedError, "The token is not authorized for this operation."),
+    ],
+)
+def test_jira_adapter_assign_issue_write_401_or_403_still_reports_normal_credential_errors(
+    status_code, expected_error, expected_message
+) -> None:
+    """Unlike the lookup (above), a failure on the assignment write itself keeps the
+    ordinary, session-level diagnosis: only the user-search half of assign_issue is
+    special-cased (R2a)."""
+
+    class FakeJiraWriteFails:
+        def resource_url(self, resource, api_root=None, api_version=None):
+            return f"rest/api/3/{resource}"
+
+        def put(self, path, *, data=None, params=None):
+            raise RequestException(f"token=secret status={status_code}", response=_FakeHttpResponse(status_code))
+
+    adapter = JiraAdapter("cloud", lambda token: FakeJiraWriteFails())
+
+    # No "@" in "abc123": resolution is skipped entirely, so this exercises only the write.
+    with pytest.raises(expected_error) as raised:
+        adapter.assign_issue("secret", "DEV-1", "abc123")
+
+    assert str(raised.value) == expected_message
+
+
+def test_jira_adapter_verify_credentials_calls_the_current_user_endpoint() -> None:
+    client = FakeJira()
+    adapter = JiraAdapter("cloud", lambda token: client)
+
+    result = adapter.verify_credentials("secret")
+
+    assert result["fields"]["assignee"]["displayName"] == "Ada"  # FakeJira.get()'s fixed response, round-tripped.
+    assert client.get_calls == [("rest/api/3/myself", None)]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_error"),
+    [
+        (401, AuthenticationError),
+        (403, PermissionDeniedError),
+    ],
+)
+def test_jira_adapter_verify_credentials_maps_a_bad_token_like_every_other_method(status_code, expected_error) -> None:
+    class FailingJira:
+        def resource_url(self, *args, **kwargs):
+            return "rest/api/3/myself"
+
+        def get(self, *args, **kwargs):
+            raise RequestException(f"token=secret status={status_code}", response=_FakeHttpResponse(status_code))
+
+    with pytest.raises(expected_error) as raised:
+        JiraAdapter("cloud", lambda token: FailingJira()).verify_credentials("secret")
+
+    assert "secret" not in str(raised.value)
+
+
 def test_bitbucket_adapter_approves_via_native_cloud_endpoint_without_a_user_slug() -> None:
     client = FakeBitbucket([])
     settings = BitbucketSettings(workspace="w", repository="r", username="u")

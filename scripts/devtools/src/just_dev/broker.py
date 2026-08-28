@@ -362,7 +362,17 @@ def _recv_json(connection: Any) -> dict[str, Any]:
 
 def _error_payload(error: Exception, tokens: Mapping[str, str]) -> dict[str, Any]:
     if isinstance(error, DevtoolsError):
-        return {"ok": False, "exit_code": error.exit_code, "message": redact_text(error, list(tokens.values()))}
+        payload: dict[str, Any] = {
+            "ok": False,
+            "exit_code": error.exit_code,
+            "message": redact_text(error, list(tokens.values())),
+        }
+        if error.status_code is not None:
+            # Carries R2b's 404-detection signal across the broker child's IPC
+            # boundary; without it, a reconstructed exception on the client side
+            # would always read back as status_code=None.
+            payload["status_code"] = error.status_code
+        return payload
     return {"ok": False, "exit_code": 27, "message": redact_text(error, list(tokens.values()))}
 
 
@@ -473,7 +483,11 @@ class BrokerClient:
         if response.get("ok"):
             return response
         error_type = _ERROR_BY_CODE.get(int(response.get("exit_code", 27)), BrokerError)
-        raise error_type(redact_text(response.get("message", "Credential broker operation failed.")))
+        reconstructed = error_type(redact_text(response.get("message", "Credential broker operation failed.")))
+        status_code = response.get("status_code")
+        if isinstance(status_code, int):
+            reconstructed.status_code = status_code
+        raise reconstructed
 
     def invoke(self, operation: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         response = self.request("operation", operation=operation, payload=dict(payload))
