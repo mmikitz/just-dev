@@ -417,6 +417,10 @@ class DevtoolsService:
             },
         )
         if dry_run:
+            self._invoke_jira_issue_operation(
+                "jira.read_issue",
+                self._payload(require_atlassian=True, issue_id_or_key=key, parameters={"fields": "summary"}),
+            )
             return preview
         if announce:
             announce(preview)
@@ -449,6 +453,11 @@ class DevtoolsService:
             raise InputValidationError("Assignee account ID or email must not be empty.")
         preview = PreviewResult(action="assign Jira issue", details={"issue_id_or_key": key, "assignee": assignee})
         if dry_run:
+            self._invoke_jira_issue_operation(
+                "jira.read_issue",
+                self._payload(require_atlassian=True, issue_id_or_key=key, parameters={"fields": "summary"}),
+            )
+            self.broker.invoke("jira.resolve_assignee", self._payload(require_atlassian=True, assignee=assignee))
             return preview
         if announce:
             announce(preview)
@@ -472,6 +481,10 @@ class DevtoolsService:
             raise InputValidationError("Comment must not be empty.")
         preview = PreviewResult(action="comment on Jira issue", details={"issue_id_or_key": key, "comment": comment})
         if dry_run:
+            self._invoke_jira_issue_operation(
+                "jira.read_issue",
+                self._payload(require_atlassian=True, issue_id_or_key=key, parameters={"fields": "summary"}),
+            )
             return preview
         if announce:
             announce(preview)
@@ -534,9 +547,6 @@ class DevtoolsService:
         key = self._jira_issue_id_or_key(issue_id_or_key)
         if not status.strip():
             raise InputValidationError("Target status must not be empty.")
-        preview = PreviewResult(action="transition Jira issue", details={"issue_id_or_key": key, "status": status})
-        if dry_run:
-            return preview
         transitions_response = self._invoke_jira_issue_operation(
             "jira.list_transitions", self._payload(require_atlassian=True, issue_id_or_key=key)
         )
@@ -559,13 +569,14 @@ class DevtoolsService:
             )
             raise InputValidationError(f"Unknown status '{status}'. Allowed transitions: {available or 'none'}.")
         matched_name = str((matched.get("to") or {}).get("name"))
+        preview = PreviewResult(
+            action="transition Jira issue",
+            details={"issue_id_or_key": key, "status": matched_name, "transition_id": matched.get("id")},
+        )
+        if dry_run:
+            return preview
         if announce:
-            announce(
-                PreviewResult(
-                    action="transition Jira issue",
-                    details={"issue_id_or_key": key, "status": matched_name, "transition_id": matched.get("id")},
-                )
-            )
+            announce(preview)
         confirm_mutation(f"transition the Jira issue to '{matched_name}'", yes=yes)
         return self._invoke_jira_issue_operation(
             "jira.transition_issue",
@@ -586,6 +597,10 @@ class DevtoolsService:
         parameters = {"deleteSubtasks": True} if delete_subtasks else {}
         preview = PreviewResult(action="delete Jira issue", details={"issue_id_or_key": key, "parameters": parameters})
         if dry_run:
+            self._invoke_jira_issue_operation(
+                "jira.read_issue",
+                self._payload(require_atlassian=True, issue_id_or_key=key, parameters={"fields": "summary"}),
+            )
             return preview
         if announce:
             announce(preview)

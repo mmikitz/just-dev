@@ -28,6 +28,8 @@ class FakeBroker:
             return {"issue_id_or_key": payload["issue_id_or_key"], "deleted": True}
         if operation == "jira.assign_issue":
             return {"issue_id_or_key": payload["issue_id_or_key"], "assignee": payload["assignee"]}
+        if operation == "jira.resolve_assignee":
+            return {"assignee": payload["assignee"]}
         if operation == "jira.comment_issue":
             return {"id": "10050", "issue_id_or_key": payload["issue_id_or_key"]}
         if operation == "jira.attach_file":
@@ -366,6 +368,104 @@ def test_jira_operation_with_a_non_404_error_never_triggers_the_credential_probe
     assert broker.calls == ["jira.read_issue"]  # No follow-up probe for a non-404 failure.
 
 
+def test_update_jira_issue_dry_run_checks_existence_but_makes_no_mutating_call(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.update_jira_issue("DEV-1", summary="New summary", dry_run=True)
+
+    assert isinstance(result, PreviewResult)
+    assert [name for name, _ in broker.calls] == ["jira.read_issue"]
+
+
+def test_comment_jira_issue_dry_run_checks_existence_but_makes_no_mutating_call(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.comment_jira_issue("DEV-1", "Looks good", dry_run=True)
+
+    assert isinstance(result, PreviewResult)
+    assert [name for name, _ in broker.calls] == ["jira.read_issue"]
+
+
+def test_delete_jira_issue_dry_run_checks_existence_but_makes_no_mutating_call(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    result = service.delete_jira_issue("DEV-1", dry_run=True)
+
+    assert isinstance(result, PreviewResult)
+    assert [name for name, _ in broker.calls] == ["jira.read_issue"]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda service: service.update_jira_issue("DEV-1", summary="New summary", dry_run=True),
+        lambda service: service.assign_jira_issue("DEV-1", "abc123", dry_run=True),
+        lambda service: service.comment_jira_issue("DEV-1", "A comment", dry_run=True),
+        lambda service: service.delete_jira_issue("DEV-1", dry_run=True),
+        lambda service: service.transition_jira_issue("DEV-1", "Done", dry_run=True),
+    ],
+    ids=["update", "assign", "comment", "delete", "transition"],
+)
+def test_jira_mutation_dry_run_against_a_nonexistent_issue_raises(config, tmp_path, call) -> None:
+    """--dry-run is supposed to rehearse the real call, not just validate strings locally
+    (F2): a 404 for a nonexistent issue must surface during dry-run too, instead of
+    silently reporting success and only failing for real."""
+
+    broker = Jira404ThenProbeBroker(probe_outcome="valid")
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError, match=r"\(404\)"):
+        call(service)
+
+
+def test_transition_jira_issue_dry_run_rejects_unknown_status(config, tmp_path) -> None:
+    """Before the fix, this would silently return a PreviewResult under --dry-run instead
+    of raising, because the transition lookup and match only ran on the real-run path."""
+
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(
+        InputValidationError, match=r"Unknown status 'Bogus'\. Allowed transitions: In Progress, Done\."
+    ):
+        service.transition_jira_issue("DEV-1", "Bogus", dry_run=True)
+
+    assert [name for name, _ in broker.calls] == ["jira.list_transitions"]
+
+
+@dataclass
+class UnresolvableAssigneeBroker:
+    """A Jira issue that exists, but whose given assignee cannot be resolved to a user."""
+
+    calls: list[tuple[str, dict]] = field(default_factory=list)
+
+    def invoke(self, operation: str, payload: dict) -> dict:
+        self.calls.append((operation, payload))
+        if operation == "jira.read_issue":
+            return {"key": payload["issue_id_or_key"], "fields": {"summary": "Existing"}}
+        if operation == "jira.resolve_assignee":
+            raise InputValidationError(
+                f"No Jira user found for '{payload['assignee']}'. Pass a Jira accountId instead."
+            )
+        raise AssertionError(f"Unexpected operation: {operation}")
+
+
+def test_assign_jira_issue_dry_run_rejects_an_unresolvable_assignee(config, tmp_path) -> None:
+    """Before the fix, this would silently return a PreviewResult under --dry-run instead
+    of raising, because assignee resolution only ran inside the real assign call."""
+
+    broker = UnresolvableAssigneeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError, match="No Jira user found"):
+        service.assign_jira_issue("DEV-1", "nobody@example.test", dry_run=True)
+
+    assert [name for name, _ in broker.calls] == ["jira.read_issue", "jira.resolve_assignee"]
+
+
 def test_verify_jira_credentials_returns_true_on_a_clean_probe(config, tmp_path) -> None:
     broker = FakeBroker()
     service = DevtoolsService(config, tmp_path, broker)
@@ -423,14 +523,14 @@ def test_assign_jira_issue_rejects_empty_assignee(config, tmp_path) -> None:
     assert broker.calls == []
 
 
-def test_assign_jira_issue_dry_run_never_calls_broker(config, tmp_path) -> None:
+def test_assign_jira_issue_dry_run_checks_issue_and_assignee_but_makes_no_mutating_call(config, tmp_path) -> None:
     broker = FakeBroker()
     service = DevtoolsService(config, tmp_path, broker)
 
     result = service.assign_jira_issue("DEV-1", "abc123", dry_run=True)
 
     assert isinstance(result, PreviewResult)
-    assert broker.calls == []
+    assert [name for name, _ in broker.calls] == ["jira.read_issue", "jira.resolve_assignee"]
 
 
 def test_comment_jira_issue_forwards_comment_text(config, tmp_path) -> None:
@@ -510,7 +610,7 @@ def test_attach_jira_issue_dry_run_short_circuits_before_reading_the_file(config
     assert broker.calls == []
 
 
-def test_transition_jira_issue_dry_run_never_calls_broker(config, tmp_path) -> None:
+def test_transition_jira_issue_dry_run_checks_transitions_but_makes_no_mutating_call(config, tmp_path) -> None:
     broker = FakeBroker()
     service = DevtoolsService(config, tmp_path, broker)
 
@@ -518,7 +618,8 @@ def test_transition_jira_issue_dry_run_never_calls_broker(config, tmp_path) -> N
 
     assert isinstance(result, PreviewResult)
     assert result.details["status"] == "Done"
-    assert broker.calls == []
+    assert result.details["transition_id"] == "31"
+    assert [name for name, _ in broker.calls] == ["jira.list_transitions"]
 
 
 def test_transition_jira_issue_resolves_status_to_transition_id_case_insensitively(config, tmp_path) -> None:
