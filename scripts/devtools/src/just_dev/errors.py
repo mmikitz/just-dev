@@ -14,6 +14,9 @@ class DevtoolsError(Exception):
 
     message: str
     exit_code: int = 70
+    # Set only by _sdk_error's generic-4xx branch (adapters.py), so a caller can narrowly
+    # detect "this was an HTTP 404" without string-matching the message or a new `kind`.
+    status_code: int | None = None
 
     @property
     def kind(self) -> str:

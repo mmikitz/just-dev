@@ -130,3 +130,7 @@ class BrokerStatus(StrictModel):
     platform: str | None = None
     pid: int | None = None
     source: str | None = None
+    # Whether the Jira credential itself authenticates, not just that a broker
+    # session or CI token is present: True/False when actually probed, None when
+    # there was nothing to test (active=False) or the probe could not be attempted.
+    verified: bool | None = None

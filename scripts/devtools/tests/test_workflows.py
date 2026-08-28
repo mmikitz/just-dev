@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from just_dev.errors import ConfigurationError, InputValidationError
+from just_dev.errors import AuthenticationError, ConfigurationError, InputValidationError, PermissionDeniedError
 from just_dev.models import BuildResult, PageResult, PreviewResult, PullRequestResult
 from just_dev.workflows import DevtoolsService
 
@@ -41,6 +41,8 @@ class FakeBroker:
             }
         if operation == "jira.transition_issue":
             return {"issue_id_or_key": payload["issue_id_or_key"], "transitioned": True}
+        if operation == "jira.verify_credentials":
+            return {"accountId": "abc123", "displayName": "Ada"}
         if operation == "bitbucket.create_pull_request":
             return {
                 "id": 7,
@@ -288,6 +290,114 @@ def test_jira_commands_reject_a_malformed_issue_key_before_calling_the_broker(
         service.read_jira_issue(issue_id_or_key)
 
     assert broker.calls == []
+
+
+@dataclass
+class Jira404ThenProbeBroker:
+    """A primary Jira call that always 404s (R2b), plus a controllable credential probe."""
+
+    probe_outcome: str  # "valid", "invalid", or "cannot_check"
+    calls: list[tuple[str, dict]] = field(default_factory=list)
+
+    def invoke(self, operation: str, payload: dict) -> dict:
+        self.calls.append((operation, payload))
+        if operation == "jira.verify_credentials":
+            if self.probe_outcome == "invalid":
+                raise AuthenticationError("Remote service rejected the configured credentials.")
+            if self.probe_outcome == "cannot_check":
+                raise ConfigurationError("No Cloud ID is available for the configured Atlassian site.")
+            return {"accountId": "abc123"}
+        error = InputValidationError("Remote service rejected the request (404).")
+        error.status_code = 404
+        raise error
+
+
+def test_read_jira_issue_404_reports_a_bad_credential_when_the_probe_confirms_it(config, tmp_path) -> None:
+    broker = Jira404ThenProbeBroker(probe_outcome="invalid")
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(AuthenticationError, match="no longer valid") as raised:
+        service.read_jira_issue("DEV-1")
+
+    assert isinstance(raised.value.__cause__, InputValidationError)
+    assert [name for name, _ in broker.calls] == ["jira.read_issue", "jira.verify_credentials"]
+
+
+def test_read_jira_issue_404_is_left_unchanged_when_the_probe_confirms_the_credential_is_fine(config, tmp_path) -> None:
+    broker = Jira404ThenProbeBroker(probe_outcome="valid")
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError, match=r"\(404\)") as raised:
+        service.read_jira_issue("DEV-1")
+
+    assert raised.value.status_code == 404
+    assert [name for name, _ in broker.calls] == ["jira.read_issue", "jira.verify_credentials"]
+
+
+def test_read_jira_issue_404_is_left_unchanged_when_the_probe_itself_cannot_run(config, tmp_path) -> None:
+    """A real 'not found' is still the best available diagnosis when we cannot even
+    attempt to tell it apart from a credential problem."""
+
+    broker = Jira404ThenProbeBroker(probe_outcome="cannot_check")
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(InputValidationError, match=r"\(404\)") as raised:
+        service.read_jira_issue("DEV-1")
+
+    assert raised.value.status_code == 404
+    assert [name for name, _ in broker.calls] == ["jira.read_issue", "jira.verify_credentials"]
+
+
+def test_jira_operation_with_a_non_404_error_never_triggers_the_credential_probe(config, tmp_path) -> None:
+    class Jira409Broker:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def invoke(self, operation: str, payload: dict) -> dict:
+            self.calls.append(operation)
+            raise ConfigurationError("Some other failure with no HTTP status attached.")
+
+    broker = Jira409Broker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    with pytest.raises(ConfigurationError, match="Some other failure"):
+        service.read_jira_issue("DEV-1")
+
+    assert broker.calls == ["jira.read_issue"]  # No follow-up probe for a non-404 failure.
+
+
+def test_verify_jira_credentials_returns_true_on_a_clean_probe(config, tmp_path) -> None:
+    broker = FakeBroker()
+    service = DevtoolsService(config, tmp_path, broker)
+
+    assert service.verify_jira_credentials() is True
+    assert [name for name, _ in broker.calls] == ["jira.verify_credentials"]
+
+
+@pytest.mark.parametrize("error", [AuthenticationError("bad token"), PermissionDeniedError("scope missing")])
+def test_verify_jira_credentials_returns_false_for_a_confirmed_bad_credential(config, tmp_path, error) -> None:
+    class RejectingBroker:
+        def invoke(self, operation: str, payload: dict) -> dict:
+            raise error
+
+    service = DevtoolsService(config, tmp_path, RejectingBroker())
+
+    assert service.verify_jira_credentials() is False
+
+
+def test_verify_jira_credentials_propagates_failures_that_are_not_a_credential_verdict(config, tmp_path) -> None:
+    """A caller needs to tell "confirmed bad" apart from "couldn't even check" (R2b/R4):
+    only Authentication/PermissionDeniedError collapse to False; everything else,
+    such as an unresolvable Cloud ID, must still surface as itself."""
+
+    class FailingBroker:
+        def invoke(self, operation: str, payload: dict) -> dict:
+            raise ConfigurationError("No Cloud ID is available for the configured Atlassian site.")
+
+    service = DevtoolsService(config, tmp_path, FailingBroker())
+
+    with pytest.raises(ConfigurationError):
+        service.verify_jira_credentials()
 
 
 def test_assign_jira_issue_announces_preview_before_confirming(config, tmp_path) -> None:

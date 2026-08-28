@@ -162,6 +162,8 @@ def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mappin
                 str(payload["issue_id_or_key"]),
                 str(payload["transition_id"]),
             )
+        elif operation == "jira.verify_credentials":
+            result = JiraAdapter(config.atlassian.cloud_id).verify_credentials(_token(tokens, "jira", ci=ci))
         elif operation == "bitbucket.create_pull_request":
             result = BitbucketAdapter(config.bitbucket).create_pull_request(
                 _token(tokens, "bitbucket", ci=ci),

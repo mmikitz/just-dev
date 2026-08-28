@@ -39,3 +39,16 @@ def test_kind_matches_the_readme_exit_code_table(error_class, exit_code, kind) -
 
 def test_devtools_error_falls_back_to_a_generic_kind() -> None:
     assert DevtoolsError("message").kind == "devtools"
+
+
+def test_status_code_defaults_to_none_and_does_not_disturb_existing_constructors() -> None:
+    """R2b: every subclass still calls super().__init__(message, exit_code) positionally,
+    so status_code must default to None without any subclass constructor changing."""
+
+    error = InputValidationError("message")
+
+    assert error.status_code is None
+
+    error.status_code = 404
+
+    assert error.status_code == 404

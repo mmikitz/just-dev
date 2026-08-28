@@ -14,7 +14,14 @@ from typing import Any, Protocol
 from .atlassian import site_url_from_configured_cloud_id
 from .config import require_preset, require_real_value
 from .confirmation import confirm_mutation
-from .errors import ConfigurationError, InputValidationError, VerificationError
+from .errors import (
+    AuthenticationError,
+    ConfigurationError,
+    DevtoolsError,
+    InputValidationError,
+    PermissionDeniedError,
+    VerificationError,
+)
 from .jira import jira_fields_parameter, parse_includes, validate_view
 from .markdown import markdown_to_storage
 from .models import (
@@ -229,6 +236,49 @@ class DevtoolsService:
             )
         return fields
 
+    def verify_jira_credentials(self) -> bool:
+        """Probe the Jira credential itself, not just its presence (principle 16): a
+        broker session or CI token being configured only proves *something* is set,
+        not that it still authenticates. Returns a plain bool for a clean probe;
+        anything the probe itself could not complete (unresolvable Cloud ID, network
+        failure, ...) propagates so the caller can tell "confirmed bad" from
+        "couldn't check" apart.
+        """
+
+        self._validate_atlassian()
+        try:
+            self.broker.invoke("jira.verify_credentials", self._payload(require_atlassian=True))
+        except (AuthenticationError, PermissionDeniedError):
+            return False
+        return True
+
+    def _invoke_jira_issue_operation(self, operation: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Route every per-issue Jira operation through one failure-diagnosis rule (R2b).
+
+        Jira returns the same 404 both for an issue that genuinely does not exist and,
+        deliberately, for one the caller's token cannot see — so a bare 404 is not by
+        itself proof of a missing issue. On a 404, re-probe the credential: if it is
+        confirmed bad, report that instead of "not found" so the operator fixes the
+        actual problem; if the probe still succeeds, or could not even be attempted,
+        the original not-found-style diagnosis is left unchanged, since it is either
+        correct or the best available answer.
+        """
+
+        try:
+            return self.broker.invoke(operation, payload)
+        except DevtoolsError as error:
+            if error.status_code != 404:
+                raise
+            try:
+                credential_is_valid = self.verify_jira_credentials()
+            except DevtoolsError:
+                credential_is_valid = True  # Could not even check; the original diagnosis stands.
+            if credential_is_valid:
+                raise
+            raise AuthenticationError(
+                "The configured Jira credential is no longer valid; re-authenticate before retrying."
+            ) from error
+
     def create_jira_issue(
         self,
         preset_name: str,
@@ -284,7 +334,7 @@ class DevtoolsService:
             for key, value in (("fields", fields_parameter), ("expand", expand), ("properties", properties))
             if value
         }
-        return self.broker.invoke(
+        return self._invoke_jira_issue_operation(
             "jira.read_issue",
             self._payload(
                 require_atlassian=True,
@@ -371,7 +421,7 @@ class DevtoolsService:
         if announce:
             announce(preview)
         confirm_mutation("update the Jira issue", yes=yes)
-        return self.broker.invoke(
+        return self._invoke_jira_issue_operation(
             "jira.update_issue",
             self._payload(
                 require_atlassian=True,
@@ -403,7 +453,7 @@ class DevtoolsService:
         if announce:
             announce(preview)
         confirm_mutation("assign the Jira issue", yes=yes)
-        return self.broker.invoke(
+        return self._invoke_jira_issue_operation(
             "jira.assign_issue", self._payload(require_atlassian=True, issue_id_or_key=key, assignee=assignee)
         )
 
@@ -426,7 +476,7 @@ class DevtoolsService:
         if announce:
             announce(preview)
         confirm_mutation("comment on the Jira issue", yes=yes)
-        return self.broker.invoke(
+        return self._invoke_jira_issue_operation(
             "jira.comment_issue", self._payload(require_atlassian=True, issue_id_or_key=key, comment=comment)
         )
 
@@ -466,7 +516,7 @@ class DevtoolsService:
             announce(preview)
         confirm_mutation("attach the file to the Jira issue", yes=yes)
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-        return self.broker.invoke(
+        return self._invoke_jira_issue_operation(
             "jira.attach_file",
             self._payload(require_atlassian=True, issue_id_or_key=key, filename=path.name, content_b64=encoded),
         )
@@ -487,7 +537,7 @@ class DevtoolsService:
         preview = PreviewResult(action="transition Jira issue", details={"issue_id_or_key": key, "status": status})
         if dry_run:
             return preview
-        transitions_response = self.broker.invoke(
+        transitions_response = self._invoke_jira_issue_operation(
             "jira.list_transitions", self._payload(require_atlassian=True, issue_id_or_key=key)
         )
         transitions = transitions_response.get("transitions") or []
@@ -517,7 +567,7 @@ class DevtoolsService:
                 )
             )
         confirm_mutation(f"transition the Jira issue to '{matched_name}'", yes=yes)
-        return self.broker.invoke(
+        return self._invoke_jira_issue_operation(
             "jira.transition_issue",
             self._payload(require_atlassian=True, issue_id_or_key=key, transition_id=matched.get("id")),
         )
@@ -540,7 +590,7 @@ class DevtoolsService:
         if announce:
             announce(preview)
         confirm_mutation("delete the Jira issue", yes=yes)
-        return self.broker.invoke(
+        return self._invoke_jira_issue_operation(
             "jira.delete_issue", self._payload(require_atlassian=True, issue_id_or_key=key, parameters=parameters)
         )
 

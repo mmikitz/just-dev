@@ -32,6 +32,13 @@ remove any temporary owner bypass once a second reviewer is available.
   shared adapter/workflow tests already in place.
 - Just recipe tests verify every flat alias and namespaced form, including
   spaces, special characters, repeated auth options, and output flags.
+  `test_manifest_matches_the_real_recipe_surface` closes the loop between the
+  two: it walks `describe-commands`' own manifest and, for every declared
+  property of every command, drives the real recipe with the matching
+  `--kebab-flag` (or, for a property marked positional, confirms `just`
+  rejects that flag) — so a manifest that claims a flag no recipe accepts, or
+  omits one every recipe does accept, fails a test instead of only surfacing
+  when an agent tries it.
 - `check-changed` tests verify staged-file-to-test selection and the full-suite
   fallback.
 

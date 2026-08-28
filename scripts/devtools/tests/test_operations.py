@@ -54,6 +54,10 @@ class FakeJiraAdapter:
         self.calls.append(("transition", self.cloud_id, token, issue_id_or_key, transition_id))
         return {"issue_id_or_key": issue_id_or_key, "transition_id": transition_id}
 
+    def verify_credentials(self, token: str) -> dict:
+        self.calls.append(("verify_credentials", self.cloud_id, token))
+        return {"accountId": "abc123"}
+
 
 class FakeBitbucketAdapter:
     calls: list[tuple] = []
@@ -238,6 +242,28 @@ def test_jira_assign_comment_attach_and_transition_operations_forward_to_the_ada
         "DEV-1",
         "acc-123",
     )
+
+
+def test_jira_verify_credentials_operation_forwards_the_token_to_the_adapter(config, monkeypatch) -> None:
+    FakeJiraAdapter.calls = []
+    monkeypatch.setattr(operations, "JiraAdapter", FakeJiraAdapter)
+    payload = {"config": config.model_dump(mode="json")}
+
+    result = execute_operation({"jira": "jira-secret"}, "jira.verify_credentials", payload)
+
+    assert result == {"accountId": "abc123"}
+    assert FakeJiraAdapter.calls == [("verify_credentials", config.atlassian.cloud_id, "jira-secret")]
+
+
+def test_jira_verify_credentials_missing_local_and_ci_tokens_explain_the_respective_recovery_path(config) -> None:
+    payload = {"config": config.model_dump(mode="json")}
+
+    with pytest.raises(AuthenticationError, match=r"configure-auth --entry jira=KEEPASS_ENTRY_UUID") as local:
+        execute_operation({}, "jira.verify_credentials", payload)
+    assert "unlock-secrets" in str(local.value)
+
+    with pytest.raises(AuthenticationError, match="JUST_DEV_CI_JIRA_TOKEN"):
+        execute_operation({}, "jira.verify_credentials", {**payload, "__just_dev_ci": True})
 
 
 def test_jira_update_body_parses_comma_separated_labels_and_wraps_priority() -> None:

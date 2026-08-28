@@ -197,7 +197,11 @@ def _sdk_error(service: str, error: Exception) -> DevtoolsError:
         detail = _remote_error_detail(error)
         if detail:
             message = f"{message} {detail}"
-        return InputValidationError(message)
+        mapped = InputValidationError(message)
+        # Narrow, non-string-matching signal for callers that need to tell a 404
+        # apart from the rest of this bucket (R2b) without a new error kind.
+        mapped.status_code = status
+        return mapped
     if status is not None:
         return NetworkError(f"{service} request failed with HTTP {status}.")
     if isinstance(error, ApiPermissionError):
@@ -305,11 +309,31 @@ class JiraAdapter:
 
     @staticmethod
     def _resolve_assignee(client: JiraClient, assignee: str) -> str:
-        """Accept a Jira accountId as-is; resolve an email address to one via user search."""
+        """Accept a Jira accountId as-is; resolve an email address to one via user search.
+
+        The search call is deliberately isolated from the write's own error mapping
+        (R2a): a token that can assign issues just fine but lacks the separate
+        user-search scope must not be misdiagnosed as "credentials rejected" for the
+        whole operation, which sends the operator to fix the wrong thing.
+        """
 
         if "@" not in assignee:
             return assignee
-        results = client.user_find_by_user_string(query=assignee)
+        try:
+            results = client.user_find_by_user_string(query=assignee)
+        except (
+            ApiConflictError,
+            ApiPermissionError,
+            RequestException,
+            jenkins.JenkinsException,
+            OSError,
+        ) as exc:
+            if _exception_status(exc) in (401, 403):
+                raise PermissionDeniedError(
+                    f"Could not look up '{assignee}' — the token lacks Jira user-search permission. "
+                    "Pass a Jira accountId instead."
+                ) from exc
+            raise
         candidates = [
             user
             for user in (results if isinstance(results, list) else [])
@@ -363,6 +387,15 @@ class JiraAdapter:
             data={"transition": {"id": transition_id}},
         )
         return self._completed_response(response, {"issue_id_or_key": issue_id_or_key, "transitioned": True})
+
+    @_sdk_errors("Jira")
+    def verify_credentials(self, token: str) -> dict[str, Any]:
+        """A minimal authenticated call (R2b/R4): a bad token maps to Authentication/
+        PermissionDeniedError through the same `_sdk_errors` path as every other
+        method here, with no bespoke error handling needed for the probe itself."""
+
+        client = self._client(token)
+        return dict(_mapping(client.get(client.resource_url("myself")), "Jira"))
 
 
 class BitbucketAdapter:

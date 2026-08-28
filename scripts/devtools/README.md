@@ -179,6 +179,15 @@ Typer/Click introspection plus a small hand-written annotation table. Use
 the right tool for a human skimming recipe names (it does not disclose flag
 names — they print as the literal placeholder `[OPTIONS]`).
 
+Each `inputSchema` property name is the actual `--flag` a recipe accepts
+(kebab-case it and it round-trips, e.g. `dry_run` -> `--dry-run`), not
+necessarily the CLI's internal Python parameter name — `--format` shows up as
+`format`, not `output_format`. A property marked `"x-cli-positional": true`
+has no flag at all; pass it by position instead, at its
+`"x-cli-positional-index"`. `--profile NAME`, to select a local auth profile
+other than `default`, is now available on every recipe in this list, not
+only `configure-auth`/`unlock-secrets`/`show-auth-status`/`lock-secrets`.
+
 ## Everyday commands
 
 The flat form is preferred; the namespaced form is equivalent, for example

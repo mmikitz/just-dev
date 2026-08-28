@@ -130,7 +130,12 @@ All public result recipes accept `--format text|markdown|json` and `--safe`.
 Text is compact plain output, Markdown is readable structured output, and JSON
 is machine-oriented. The Jira read command defaults to a concise Markdown
 summary. Use `--view full --format json` when an automation needs the complete
-issue representation.
+issue representation. Every recipe that talks to a remote service also
+accepts `--profile NAME` to select a local auth profile other than
+`default` (`auth.just`'s recipes always forwarded it, being a raw `"$@"`
+passthrough; every `jira.just`/`bitbucket.just`/`jenkins.just`/
+`confluence.just` recipe now declares it too, matching the `--profile`
+option every one of those commands already had at the Typer layer).
 
 ```text
 just read-jira-issue ISSUE \
@@ -155,3 +160,12 @@ comment, and add-reviewer; Jenkins accepts named allowlisted presets and
 parameters; and Confluence writes only versioned preset pages. See
 `UX-DESIGN-PRINCIPLES.md` for the principle governing when a capability
 becomes a new command versus a new flag on an existing one.
+
+`describe-commands`' `annotations` (`src/just_dev/introspect.py`) mark
+`jira.delete-jira-issue` destructive and *not* idempotent, unlike the other
+destructive Jira mutations. Jira's delete endpoint returns 404 whether the
+issue was already deleted or never existed, so a retry after a dropped
+connection can't tell those two cases apart; annotating it idempotent would
+tell a caller a blind retry is always safe, when it can just as easily mask a
+reused or mistyped key behind an apparently-successful no-op instead of
+surfacing the real problem.
