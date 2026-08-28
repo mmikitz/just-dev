@@ -355,6 +355,15 @@ class JiraAdapter:
         return self._completed_response(response, {"issue_id_or_key": issue_id_or_key, "assignee": resolved})
 
     @_sdk_errors("Jira")
+    def resolve_assignee(self, token: str, assignee: str) -> dict[str, Any]:
+        """Resolve an accountId or email to a confirmed Jira accountId without assigning
+        anything. The read-only half of assign_issue, exposed so --dry-run can rehearse
+        assignee resolution instead of only checking the issue exists."""
+
+        client = self._client(token)
+        return {"assignee": self._resolve_assignee(client, assignee)}
+
+    @_sdk_errors("Jira")
     def comment_issue(self, token: str, issue_id_or_key: str, request: Mapping[str, Any]) -> dict[str, Any]:
         client = self._client(token)
         return dict(

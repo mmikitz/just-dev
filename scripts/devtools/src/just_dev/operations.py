@@ -142,6 +142,11 @@ def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mappin
                 str(payload["issue_id_or_key"]),
                 str(payload["assignee"]),
             )
+        elif operation == "jira.resolve_assignee":
+            result = JiraAdapter(config.atlassian.cloud_id).resolve_assignee(
+                _token(tokens, "jira", ci=ci),
+                str(payload["assignee"]),
+            )
         elif operation == "jira.comment_issue":
             result = JiraAdapter(config.atlassian.cloud_id).comment_issue(
                 _token(tokens, "jira", ci=ci),

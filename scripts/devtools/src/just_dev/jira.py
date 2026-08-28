@@ -94,11 +94,25 @@ def prepare_issue_view(
         field_data.pop(field, None)
 
     if view == "summary":
-        selected = parse_csv(fields, label="--fields") or list(_DEFAULT_SUMMARY_FIELDS)
+        explicit_fields = parse_csv(fields, label="--fields")
+        if explicit_fields:
+            # Jira silently drops unknown field names from its own response instead of
+            # erroring, so a typo'd --fields value would otherwise degrade to an empty
+            # (or near-empty) result with no indication anything was wrong. Compare
+            # against the *raw* response fields (before the bulky-section pop above) so
+            # a legitimate field withheld only because its --include wasn't passed is
+            # never mistaken for a typo.
+            remote_field_names = set(remote_fields) if isinstance(remote_fields, Mapping) else set()
+            unknown = sorted(set(explicit_fields) - remote_field_names)
+            if unknown:
+                raise InputValidationError(
+                    "--fields requested field(s) Jira did not return (unknown: " + ", ".join(unknown) + ")."
+                )
+        selected = explicit_fields or list(_DEFAULT_SUMMARY_FIELDS)
         selected.extend(field for field in included_fields if field not in selected)
         field_data = {field: field_data[field] for field in selected if field in field_data}
         result: dict[str, Any] = {}
-        for key in ("id", "key"):
+        for key in ("id", "key", "changelog", "names", "schema"):
             if key in issue:
                 result[key] = issue[key]
         result["fields"] = field_data

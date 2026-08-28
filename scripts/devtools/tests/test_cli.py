@@ -349,7 +349,13 @@ verify_commands = ["true"]
     assert "From recipe" in from_recipe.output
 
 
-def test_transition_jira_issue_dry_run_needs_no_broker(tmp_path, monkeypatch) -> None:
+def test_transition_jira_issue_dry_run_still_checks_available_transitions(tmp_path, monkeypatch) -> None:
+    """F2: --dry-run rehearses the transition lookup instead of skipping the broker
+    entirely, so an unknown status or a nonexistent issue fails during dry-run too. That
+    means this dry-run does need a broker call now (unlike e.g. create-jira-issue's) — so,
+    following the same pattern as the _CiOperationClient tests above, fake the single
+    read-only call it makes instead of reaching a real Jira site."""
+
     config_path = tmp_path / "project.toml"
     config_path.write_text(
         """
@@ -371,6 +377,15 @@ verify_commands = ["true"]
         encoding="utf-8",
     )
     monkeypatch.setenv("JUST_DEV_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("JUST_DEV_CI_JIRA_TOKEN", "ci-secret")
+    calls = []
+
+    def fake_execute(tokens, operation, payload):
+        calls.append(operation)
+        return {"transitions": [{"id": "31", "to": {"name": "Done"}}]}
+
+    monkeypatch.setattr("just_dev.cli.execute_operation", fake_execute)
 
     result = CliRunner().invoke(
         app,
@@ -379,6 +394,7 @@ verify_commands = ["true"]
 
     assert result.exit_code == 0, result.output
     assert "transition Jira issue" in result.output
+    assert calls == ["jira.list_transitions"]
 
 
 def test_attach_jira_issue_dry_run_needs_no_broker(tmp_path, monkeypatch) -> None:
