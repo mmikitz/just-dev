@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .adapters import BitbucketAdapter, ConfluenceAdapter, JenkinsAdapter, JiraAdapter
 from .atlassian import site_url_from_configured_cloud_id
 from .config import require_preset
 from .errors import AuthenticationError, ConfigurationError, InputValidationError
@@ -92,6 +91,11 @@ def _jira_update_body(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 def execute_operation(tokens: Mapping[str, str], operation: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     """Execute only a named, finite set of safe integration operations."""
+
+    # Deferred (U8): these adapters transitively import the atlassian/jenkins SDKs and
+    # requests/bs4 (~285ms); a command that fails local validation or just wants --help
+    # never reaches here, so it must not pay for this either.
+    from .adapters import BitbucketAdapter, ConfluenceAdapter, JenkinsAdapter, JiraAdapter
 
     try:
         ci = payload.get("__just_dev_ci") is True

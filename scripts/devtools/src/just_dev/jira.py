@@ -262,3 +262,56 @@ def render_attach_markdown(value: Any) -> str:
     size = attachments[0].get("size") if isinstance(attachments, list) and attachments else None
     detail = f" ({size} bytes)" if size is not None else ""
     return f"Attached **{filename}**{detail} to **{issue}**."
+
+
+_CREATE_SUMMARY_FIELDS = ("id", "key", "self")
+
+
+def prepare_create_view(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Condense a raw Jira create-issue response to the fields that confirm success.
+
+    Jira's create-issue response is already just id/key/self, unlike comment's and
+    attach's nested author/avatar bulk; this only guards against a future response
+    growing bulkier the same way.
+    """
+
+    return {key: value[key] for key in _CREATE_SUMMARY_FIELDS if key in value}
+
+
+def render_create_markdown(value: Any) -> str:
+    """A one-line Markdown confirmation for create-jira-issue, instead of a raw API dump."""
+
+    if not isinstance(value, Mapping):
+        return render_markdown(value)
+    key = value.get("key")
+    if not key:
+        return render_markdown(value)
+    self_link = value.get("self")
+    detail = f" ({self_link})" if self_link else ""
+    return f"Created **{key}**{detail}."
+
+
+def prepare_comment_view(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Condense a raw Jira add-comment response to the fields that confirm success.
+
+    Jira's comment resource carries the same nested author/updateAuthor bulk (email
+    address, avatar URLs) read-jira-issue already collapses for its own view. Unlike
+    attach's response, Jira's add-comment response has no issue key/id of its own (only
+    the new comment's 'id'), so cli.py folds the already-known issue_id_or_key in before
+    this trims down to the confirming fields.
+    """
+
+    return {key: value[key] for key in ("issue_id_or_key", "id") if key in value}
+
+
+def render_comment_markdown(value: Any) -> str:
+    """A one-line Markdown confirmation for comment-jira-issue, instead of a raw API dump."""
+
+    if not isinstance(value, Mapping):
+        return render_markdown(value)
+    comment_id = value.get("id")
+    if not comment_id:
+        return render_markdown(value)
+    issue = value.get("issue_id_or_key")
+    target = f" to **{issue}**" if issue else ""
+    return f"Added comment **{comment_id}**{target}."
